@@ -3,43 +3,66 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { Camera, Flashlight, FlashlightOff, Keyboard, X, RefreshCw } from "lucide-react"
-import Header from "@/components/Header"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { 
+  Camera, 
+  FlashlightIcon as Flashlight,
+  ArrowLeft, 
+  AlertCircle,
+  CheckCircle,
+  X,
+  RotateCcw,
+  Type,
+  Check,
+  QrCode
+} from "lucide-react"
+import QrScanner from "qr-scanner"
+import { supabaseApi, Location } from "@/lib/supabase"
 import { toast } from "@/hooks/use-toast"
 
-// Dynamic import for QrScanner to avoid SSR issues
-let QrScanner: any = null
-if (typeof window !== "undefined") {
-  import("qr-scanner").then((module) => {
-    QrScanner = module.default
-  })
+const LOCATION_NAMES: Record<string, string> = {
+  main_lobby: "Main Lobby",
+  south_lobby: "South Lobby", 
+  u_walk: "U Walk",
+  east_dome: "East Dome"
 }
 
 export default function QRScannerPage() {
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null)
-  const [flashOn, setFlashOn] = useState(false)
-  const [showManualInput, setShowManualInput] = useState(false)
-  const [manualCode, setManualCode] = useState("")
-  const [scanning, setScanning] = useState(false)
-  const [cameraError, setCameraError] = useState<string | null>(null)
-  const [isInitializing, setIsInitializing] = useState(true)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const qrScannerRef = useRef<any>(null)
-  const router = useRouter()
   const params = useParams()
+  const router = useRouter()
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const qrScannerRef = useRef<QrScanner | null>(null)
+  
+  const [location, setLocation] = useState<Location | null>(null)
+  const [isScanning, setIsScanning] = useState(true)
+  const [flashOn, setFlashOn] = useState(false)
+  const [manualCode, setManualCode] = useState("")
+  const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt')
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  
   const locationId = params.locationId as string
 
-  const locationNames: Record<string, string> = {
-    atrium: "Atrium Central",
-    foodcourt: "Food Court",
-    cinema: "Cinema XXI",
-    playground: "Kids Playground",
-  }
+  useEffect(() => {
+    // Check if player is logged in
+    const playerId = localStorage.getItem('playerId')
+    if (!playerId) {
+      router.push('/')
+      return
+    }
+
+    // Load location data
+    loadLocationData()
+    
+    // Automatically request camera access when component mounts
+    requestCameraAccess()
+  }, [locationId, router])
 
   useEffect(() => {
-    initializeCamera()
+    // Cleanup scanner on unmount
     return () => {
       if (qrScannerRef.current) {
         qrScannerRef.current.destroy()
@@ -47,205 +70,176 @@ export default function QRScannerPage() {
     }
   }, [])
 
-  const initializeCamera = async () => {
-    setIsInitializing(true)
-    setCameraError(null)
-
+  const loadLocationData = async () => {
     try {
-      // Check if camera is available
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const videoDevices = devices.filter((device) => device.kind === "videoinput")
-
-      if (videoDevices.length === 0) {
-        throw new Error("Tidak ada kamera yang tersedia")
+      const locations = await supabaseApi.getLocations()
+      const currentLocation = locations.find(loc => loc.id === locationId)
+      
+      if (!currentLocation) {
+        setError('Lokasi tidak ditemukan')
+        return
       }
+      
+      setLocation(currentLocation)
+    } catch (error) {
+      setError('Gagal memuat data lokasi')
+    }
+  }
 
-      // Wait for QrScanner to load
-      if (!QrScanner) {
-        const module = await import("qr-scanner")
-        QrScanner = module.default
-      }
+  const initializeQrScanner = async () => {
+    if (!videoRef.current) return
+    
+    try {
+      qrScannerRef.current = new QrScanner(
+        videoRef.current,
+        (result) => handleQRDetected(result.data),
+        {
+          preferredCamera: 'environment',
+          highlightScanRegion: true,
+          highlightCodeOutline: true,
+        }
+      )
+      
+      await qrScannerRef.current.start()
+      setCameraPermission("granted")
+    } catch (error) {
+      console.error('QR Scanner error:', error)
+      setCameraPermission("denied")
+      setError("Kamera tidak tersedia. Gunakan input manual untuk memasukkan kode QR")
+    }
+  }
 
-      // Check if QR Scanner has camera support
-      const hasCamera = await QrScanner.hasCamera()
-      if (!hasCamera) {
-        throw new Error("Kamera tidak didukung pada perangkat ini")
-      }
-
-      if (videoRef.current) {
-        // Initialize QR Scanner
-        qrScannerRef.current = new QrScanner(
-          videoRef.current,
-          (result: any) => {
-            if (result && result.data) {
-              processQRCode(result.data)
-            }
-          },
-          {
-            onDecodeError: (error: any) => {
-              // Silently handle decode errors (normal when no QR code is visible)
-              console.log("Decode error:", error)
-            },
-            preferredCamera: "environment", // Use back camera
-            highlightScanRegion: true,
-            highlightCodeOutline: true,
-            maxScansPerSecond: 5,
-          },
-        )
-
-        // Start scanning
-        await qrScannerRef.current.start()
-        setHasPermission(true)
-        setScanning(true)
-      }
-    } catch (error: any) {
-      console.error("Camera initialization error:", error)
-      setHasPermission(false)
-      setCameraError(error.message || "Gagal mengakses kamera")
-
-      toast({
-        title: "Akses Kamera Gagal",
-        description: error.message || "Mohon izinkan akses kamera untuk melanjutkan",
-        variant: "destructive",
+  const requestCameraAccess = async () => {
+    try {
+      // First try to get user media to trigger permission prompt
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: "environment" } 
       })
-    } finally {
-      setIsInitializing(false)
+      
+      // Stop the stream immediately as QrScanner will handle it
+      stream.getTracks().forEach(track => track.stop())
+      
+      setCameraPermission("granted")
+      
+      // Now initialize the QR scanner
+      setTimeout(() => {
+        initializeQrScanner()
+      }, 100)
+      
+    } catch (error) {
+      console.error('Camera access error:', error)
+      setCameraPermission("denied")
+      setError("Kamera tidak tersedia. Gunakan input manual untuk memasukkan kode QR")
     }
   }
 
   const toggleFlash = async () => {
-    if (qrScannerRef.current) {
+    if (qrScannerRef.current && qrScannerRef.current.hasFlash()) {
       try {
-        if (flashOn) {
-          await qrScannerRef.current.turnFlashOff()
-          setFlashOn(false)
-        } else {
-          await qrScannerRef.current.turnFlashOn()
-          setFlashOn(true)
-        }
+        await qrScannerRef.current.toggleFlash()
+        setFlashOn(!flashOn)
       } catch (error) {
-        toast({
-          title: "Flash Tidak Tersedia",
-          description: "Perangkat tidak mendukung flash atau flash sedang digunakan aplikasi lain",
-          variant: "destructive",
-        })
+        console.error('Flash toggle error:', error)
       }
     }
   }
 
-  const handleManualSubmit = () => {
-    if (manualCode.length >= 6) {
-      processQRCode(manualCode)
-    }
-  }
-
-  const processQRCode = (code: string) => {
-    if (scanning) return // Prevent multiple scans
-
-    setScanning(false)
-
-    // Stop scanner temporarily to prevent multiple detections
+  const stopScanning = () => {
     if (qrScannerRef.current) {
       qrScannerRef.current.stop()
     }
+    setIsScanning(false)
+  }
 
-    // Validate QR code
-    const isValidCode =
-      code.includes(locationId.toUpperCase()) ||
-      code === "DEMO123" ||
-      code.includes("SUPERMAL") ||
-      code.includes("TREASURE")
+  const startScanning = async () => {
+    setIsScanning(true)
+    if (qrScannerRef.current) {
+      try {
+        await qrScannerRef.current.start()
+      } catch (error) {
+        console.error('Start scanning error:', error)
+        await initializeQrScanner()
+      }
+    } else {
+      await initializeQrScanner()
+    }
+  }
 
-    if (isValidCode) {
+  const handleQRDetected = (code: string) => {
+    console.log('QR Code detected:', code)
+    
+    // Stop scanning
+    setIsScanning(false)
+    if (qrScannerRef.current) {
+      qrScannerRef.current.stop()
+    }
+    
+    // Validate QR code for this location
+    const expectedPatterns = [
+      `HUNT${locationId?.toUpperCase()}2024`,
+      `TREASURE_${locationId?.toUpperCase()}`,
+      `LOCATION_${locationId?.toUpperCase()}`,
+      'TEST123', // For testing
+      'MERDEKA2024' // Generic code
+    ]
+    
+    const isValid = expectedPatterns.some(pattern => 
+      code.toUpperCase().includes(pattern) || 
+      pattern.includes(code.toUpperCase())
+    )
+    
+    if (isValid) {
+      setSuccess('QR Code berhasil discan! 🎉')
+      
       toast({
-        title: "QR Code Valid! ✅",
-        description: "Lanjutkan ke tahap foto",
+        title: "QR Code berhasil discan!",
+        description: "Melanjutkan ke tahap foto selfie",
       })
-
-      // Navigate to photo page
+      
+      // Proceed to photo capture
       setTimeout(() => {
         router.push(`/photo/${locationId}`)
-      }, 1000)
+      }, 1500)
     } else {
+      setError('QR Code tidak valid untuk lokasi ini. Coba lagi!')
+      
       toast({
-        title: "QR Code Tidak Valid ❌",
+        title: "QR Code tidak valid",
         description: "Pastikan Anda berada di lokasi yang benar",
-        variant: "destructive",
+        variant: "destructive"
       })
-
-      // Restart scanner after 2 seconds
+      
       setTimeout(() => {
-        if (qrScannerRef.current) {
-          qrScannerRef.current.start()
-          setScanning(true)
-        }
+        setError('')
+        startScanning()
       }, 2000)
     }
   }
 
-  const retryCamera = () => {
-    initializeCamera()
+  const handleManualSubmit = () => {
+    if (manualCode.length < 6) {
+      setError('Kode tidak lengkap. Masukkan kode QR yang lengkap')
+      return
+    }
+    
+    handleQRDetected(manualCode.toUpperCase())
   }
 
-  if (isInitializing) {
+  const goBack = () => {
+    if (qrScannerRef.current) {
+      qrScannerRef.current.destroy()
+    }
+    router.push('/dashboard')
+  }
+
+  const locationName = location?.name || LOCATION_NAMES[locationId] || "Unknown Location"
+
+  if (!location) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-gold border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-text-light text-lg font-medium">Menginisialisasi kamera...</p>
-          <p className="text-text-muted text-sm mt-2">Mohon tunggu sebentar</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (hasPermission === false) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600">
-        <Header title="QR Scanner" showBack onBack={() => router.push("/dashboard")} />
-        <div className="p-4 flex items-center justify-center min-h-[70vh]">
-          <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm">
-            <CardContent className="p-8 text-center max-w-sm">
-              <Camera className="w-20 h-20 text-gold mx-auto mb-6" />
-              <h3 className="text-xl font-bold text-text-light mb-3">Akses Kamera Diperlukan</h3>
-              <p className="text-text-muted mb-2 leading-relaxed">
-                Aplikasi ini memerlukan akses kamera untuk melakukan scan QR code.
-              </p>
-              <p className="text-text-muted mb-6 text-sm">Tanpa kamera, aplikasi tidak dapat berfungsi dengan baik.</p>
-
-              {cameraError && (
-                <div className="bg-red-error/10 border border-red-error/20 rounded-lg p-3 mb-4">
-                  <p className="text-red-error text-sm">{cameraError}</p>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                <Button
-                  onClick={retryCamera}
-                  className="w-full bg-gold hover:bg-gold/90 text-primary font-semibold py-3"
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Coba Lagi
-                </Button>
-
-                <Button
-                  onClick={() => setShowManualInput(true)}
-                  variant="outline"
-                  className="w-full border-gold/30 text-gold hover:bg-gold/10 py-3"
-                >
-                  <Keyboard className="w-4 h-4 mr-2" />
-                  Input Manual
-                </Button>
-              </div>
-
-              <div className="mt-6 p-4 bg-primary/30 rounded-lg">
-                <p className="text-xs text-text-muted">
-                  💡 <strong>Tips:</strong> Pastikan browser memiliki izin kamera dan tidak ada aplikasi lain yang
-                  menggunakan kamera
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="w-8 h-8 border-2 border-gold/30 border-t-gold rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-text-light">Memuat lokasi...</p>
         </div>
       </div>
     )
@@ -253,198 +247,215 @@ export default function QRScannerPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600">
-      <Header title={`Scan QR - ${locationNames[locationId]}`} showBack onBack={() => router.push("/dashboard")} />
+      {/* Header */}
+      <div className="bg-gradient-to-r from-primary to-onyx-gray border-b border-gold/20 p-4">
+        <div className="flex items-center justify-between">
+          <Button 
+            variant="ghost" 
+            onClick={goBack}
+            className="text-text-light hover:text-gold"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Kembali
+          </Button>
+          <div className="text-center">
+            <h1 className="text-lg font-bold text-gold">📱 Scan QR Code</h1>
+            <p className="text-text-muted text-sm">{locationName}</p>
+          </div>
+          <div className="w-20"></div> {/* Spacer */}
+        </div>
+      </div>
 
       <div className="p-4 space-y-4">
-        {/* Camera View */}
-        <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm overflow-hidden">
-          <CardContent className="p-0">
-            <div className="relative aspect-square bg-black">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-                style={{ transform: "scaleX(-1)" }} // Mirror effect for better UX
-              />
+        {/* Location Info */}
+        <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <QrCode className="h-6 w-6 text-gold" />
+              <div>
+                <h3 className="font-semibold text-text-light">{locationName}</h3>
+                <p className="text-sm text-text-muted">
+                  Scan QR code di lokasi ini
+                </p>
+              </div>
+            </div>
+            <Badge className="bg-gold/20 text-gold border-gold/30">
+              Langkah 1 dari 3
+            </Badge>
+          </CardContent>
+        </Card>
 
-              {/* QR Detection Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="relative">
-                  <div className="w-64 h-64 border-2 border-gold rounded-lg relative">
-                    {/* Corner indicators */}
-                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-gold rounded-tl-lg" />
-                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-gold rounded-tr-lg" />
-                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-gold rounded-bl-lg" />
-                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-gold rounded-br-lg" />
+        {/* Success Message */}
+        {success && (
+          <Alert className="bg-green-500/10 border-green-500/30">
+            <CheckCircle className="h-4 w-4 text-green-400" />
+            <AlertDescription className="text-green-400">
+              {success}
+            </AlertDescription>
+          </Alert>
+        )}
 
-                    {/* Scanning animation */}
-                    {scanning && (
-                      <div className="absolute inset-0 overflow-hidden rounded-lg">
-                        <div
-                          className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-gold to-transparent animate-pulse"
-                          style={{
-                            animation: "scan 2s linear infinite",
-                          }}
-                        />
-                      </div>
-                    )}
+        {/* Error Message */}
+        {error && (
+          <Alert className="bg-red-500/10 border-red-500/30">
+            <AlertCircle className="h-4 w-4 text-red-400" />
+            <AlertDescription className="text-red-400">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Camera Scanner */}
+        {cameraPermission === "granted" && isScanning && (
+          <Card className="bg-onyx-gray/50 border-gold/20 overflow-hidden">
+            <CardContent className="p-0">
+              {/* Camera Viewfinder */}
+              <div className="relative h-80 bg-black overflow-hidden">
+                {/* Video element for camera feed */}
+                <video
+                  ref={videoRef}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  muted
+                  playsInline
+                />
+                
+                {/* QR Code Detection Frame Overlay */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="relative w-48 h-48">
+                    {/* Corner borders */}
+                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-gold rounded-tl-lg"></div>
+                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-gold rounded-tr-lg"></div>
+                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-gold rounded-bl-lg"></div>
+                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-gold rounded-br-lg"></div>
+                    
+                    {/* Scanning line animation */}
+                    <div className="absolute inset-x-4 top-1/2 h-0.5 bg-gold animate-pulse"></div>
                   </div>
+                </div>
 
-                  <p className="text-center text-text-light mt-4 text-sm font-medium">
-                    {scanning ? "Mencari QR code..." : "Scanner dihentikan"}
+                {/* Instructions overlay */}
+                <div className="absolute bottom-4 left-4 right-4 text-center">
+                  <p className="text-white text-sm bg-black/50 px-3 py-1 rounded-full">
+                    Arahkan kamera ke QR code
                   </p>
                 </div>
               </div>
 
-              {/* Status indicator */}
-              <div className="absolute top-4 left-4">
-                <div
-                  className={`flex items-center space-x-2 px-3 py-1 rounded-full ${
-                    scanning
-                      ? "bg-green-success/20 border border-green-success/30"
-                      : "bg-red-error/20 border border-red-error/30"
-                  }`}
-                >
-                  <div
-                    className={`w-2 h-2 rounded-full ${scanning ? "bg-green-success animate-pulse" : "bg-red-error"}`}
-                  />
-                  <span className={`text-xs font-medium ${scanning ? "text-green-success" : "text-red-error"}`}>
-                    {scanning ? "AKTIF" : "BERHENTI"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Controls */}
-              <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center pointer-events-auto">
-                <Button
-                  onClick={toggleFlash}
-                  size="sm"
-                  className="bg-onyx-gray/80 border border-gold/30 text-gold hover:bg-gold/10 backdrop-blur-sm"
-                  variant="outline"
-                >
-                  {flashOn ? <FlashlightOff className="w-4 h-4" /> : <Flashlight className="w-4 h-4" />}
-                </Button>
-
-                <div className="text-center">
-                  <p className="text-xs text-text-muted mb-1">Arahkan ke QR code</p>
-                  <div className="w-2 h-2 bg-gold rounded-full mx-auto animate-pulse" />
-                </div>
-
-                <Button
-                  onClick={() => setShowManualInput(true)}
-                  size="sm"
-                  className="bg-onyx-gray/80 border border-gold/30 text-gold hover:bg-gold/10 backdrop-blur-sm"
-                  variant="outline"
-                >
-                  <Keyboard className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Instructions */}
-        <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm">
-          <CardContent className="p-4">
-            <h3 className="text-sm font-semibold text-text-light mb-3 flex items-center">
-              <Camera className="w-4 h-4 mr-2 text-gold" />
-              Petunjuk Scan QR Code:
-            </h3>
-            <ul className="text-xs text-text-muted space-y-2">
-              <li className="flex items-start">
-                <span className="text-gold mr-2">•</span>
-                Pastikan QR code berada dalam frame emas
-              </li>
-              <li className="flex items-start">
-                <span className="text-gold mr-2">•</span>
-                Jaga jarak sekitar 20-30 cm dari QR code
-              </li>
-              <li className="flex items-start">
-                <span className="text-gold mr-2">•</span>
-                Pastikan pencahayaan cukup terang
-              </li>
-              <li className="flex items-start">
-                <span className="text-gold mr-2">•</span>
-                Gunakan tombol flash jika diperlukan
-              </li>
-              <li className="flex items-start">
-                <span className="text-gold mr-2">•</span>
-                QR code akan terdeteksi secara otomatis
-              </li>
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Manual Input Modal */}
-      {showManualInput && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <Card className="bg-onyx-gray border-gold/20 w-full max-w-sm">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-text-light">Input Manual</h3>
-                <Button
-                  onClick={() => setShowManualInput(false)}
-                  size="sm"
-                  variant="ghost"
-                  className="text-text-muted hover:text-text-light"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm text-text-muted mb-2 block">Kode QR:</label>
-                  <Input
-                    value={manualCode}
-                    onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-                    placeholder="Masukkan kode QR (min. 6 karakter)"
-                    className="bg-primary/50 border-gold/30 text-text-light placeholder:text-text-muted focus:border-gold"
-                    maxLength={20}
-                  />
-                  <p className="text-xs text-text-muted mt-1">Contoh: DEMO123, SUPERMAL001, TREASURE001</p>
-                </div>
-
-                <div className="flex space-x-2">
+              {/* Camera Controls */}
+              <div className="p-4 border-t border-gold/20">
+                <div className="flex justify-center gap-4">
                   <Button
-                    onClick={() => setShowManualInput(false)}
                     variant="outline"
-                    className="flex-1 border-text-muted/30 text-text-muted hover:bg-text-muted/10"
+                    size="sm"
+                    onClick={toggleFlash}
+                    className="bg-black/50 border-gold/30 text-text-light hover:bg-gold/10"
                   >
-                    Batal
+                    <Flashlight className={`h-5 w-5 ${flashOn ? 'text-gold' : ''}`} />
                   </Button>
                   <Button
-                    onClick={handleManualSubmit}
-                    disabled={manualCode.length < 6}
-                    className="flex-1 bg-gold hover:bg-gold/90 text-primary font-semibold disabled:opacity-50"
+                    variant="outline"
+                    onClick={stopScanning}
+                    className="bg-black/50 border-gold/30 text-text-light hover:bg-gold/10"
                   >
-                    Submit
+                    <Type className="h-5 w-5 mr-2" />
+                    Input Manual
                   </Button>
                 </div>
               </div>
             </CardContent>
           </Card>
-        </div>
-      )}
+        )}
 
-      <style jsx>{`
-        @keyframes scan {
-          0% { 
-            top: 0; 
-            opacity: 1;
-          }
-          50% {
-            opacity: 1;
-          }
-          100% { 
-            top: 100%; 
-            opacity: 0;
-          }
-        }
-      `}</style>
+        {/* Manual Input */}
+        {(!isScanning || cameraPermission === "denied") && (
+          <Card className="bg-onyx-gray/50 border-gold/20">
+            <CardContent className="p-6">
+              <div className="text-center mb-6">
+                <Type className="h-12 w-12 text-gold mx-auto mb-3" />
+                <h3 className="font-semibold text-text-light mb-2">
+                  Input Manual
+                </h3>
+                <p className="text-sm text-text-muted">
+                  Masukkan kode QR secara manual jika kamera tidak tersedia
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <Input
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    placeholder="Masukkan kode QR"
+                    className="text-center text-lg font-mono tracking-wider bg-primary/50 border-gold/30 text-text-light placeholder:text-text-muted focus:border-gold"
+                    autoFocus
+                  />
+                  <p className="text-xs text-text-muted mt-2 text-center">
+                    💡 Untuk testing: gunakan "TEST123" atau "MERDEKA2024"
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  {cameraPermission === "granted" && (
+                    <Button
+                      variant="outline"
+                      onClick={startScanning}
+                      className="flex-1 border-gold/30 text-text-light hover:bg-gold/10"
+                    >
+                      <Camera className="h-5 w-5 mr-2" />
+                      Kembali ke Kamera
+                    </Button>
+                  )}
+                  <Button
+                    onClick={handleManualSubmit}
+                    className="flex-1 bg-gold hover:bg-gold/90 text-primary"
+                    disabled={manualCode.length < 6}
+                  >
+                    <Check className="h-5 w-5 mr-2" />
+                    Verifikasi
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Camera Permission Denied */}
+        {cameraPermission === "denied" && (
+          <Card className="bg-red-500/10 border-red-500/30">
+            <CardContent className="p-6 text-center">
+              <X className="w-16 h-16 text-red-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-red-400 mb-2">
+                Akses Kamera Ditolak
+              </h3>
+              <p className="text-text-muted mb-4">
+                Untuk menggunakan scanner QR, izinkan akses kamera pada pengaturan browser
+              </p>
+              <div className="space-y-2">
+                <Button 
+                  onClick={requestCameraAccess}
+                  className="bg-gold hover:bg-gold/90 text-primary w-full"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Coba Lagi
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Instructions */}
+        <Card className="bg-blue-500/10 border-blue-500/20">
+          <CardContent className="p-4">
+            <h4 className="text-blue-300 font-semibold text-sm mb-2">📋 Petunjuk Scan QR:</h4>
+            <ol className="text-text-muted text-xs space-y-1 ml-4 list-decimal">
+              <li>Cari QR code di dekorasi kemerdekaan lokasi {locationName}</li>
+              <li>Arahkan kamera ke QR code hingga terdeteksi</li>
+              <li>Pastikan pencahayaan cukup untuk scan yang optimal</li>
+              <li>Jika kesulitan, gunakan tombol "Input Manual" untuk input kode</li>
+            </ol>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

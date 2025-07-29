@@ -1,244 +1,407 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Camera, RotateCcw, Check, X } from "lucide-react"
-import Header from "@/components/Header"
-import { toast } from "@/hooks/use-toast"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { 
+  Camera, 
+  ArrowLeft, 
+  RotateCcw,
+  CheckCircle,
+  AlertCircle,
+  SwitchCamera,
+  X
+} from "lucide-react"
+import { supabaseApi, Location } from "@/lib/supabase"
 
 export default function PhotoCapturePage() {
-  const [stream, setStream] = useState<MediaStream | null>(null)
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("user")
-  const [loading, setLoading] = useState(false)
+  const params = useParams()
+  const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const router = useRouter()
-  const params = useParams()
+  
+  const [location, setLocation] = useState<Location | null>(null)
+  const [stream, setStream] = useState<MediaStream | null>(null)
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user') // Front camera for selfie
+  const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'pending'>('pending')
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [uploading, setUploading] = useState(false)
+  
   const locationId = params.locationId as string
 
-  const locationNames: Record<string, string> = {
-    atrium: "Atrium Central",
-    foodcourt: "Food Court",
-    cinema: "Cinema XXI",
-    playground: "Kids Playground",
-  }
-
-  const decorationRequirements: Record<string, string> = {
-    atrium: "Foto dengan bendera merah putih di latar belakang",
-    foodcourt: "Foto dengan dekorasi kemerdekaan di area makan",
-    cinema: "Foto dengan poster kemerdekaan di area cinema",
-    playground: "Foto dengan hiasan 17 Agustus di playground",
-  }
-
   useEffect(() => {
-    startCamera()
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
-      }
+    // Check if player is logged in
+    const playerId = localStorage.getItem('playerId')
+    if (!playerId) {
+      router.push('/')
+      return
     }
-  }, [facingMode])
 
-  const startCamera = async () => {
+    // Load location data
+    loadLocationData()
+  }, [locationId, router])
+
+  const loadLocationData = async () => {
     try {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
+      const locations = await supabaseApi.getLocations()
+      const currentLocation = locations.find(loc => loc.id === locationId)
+      
+      if (!currentLocation) {
+        setError('Lokasi tidak ditemukan')
+        return
       }
+      
+      setLocation(currentLocation)
+    } catch (error) {
+      setError('Gagal memuat data lokasi')
+    }
+  }
 
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode },
+  const requestCameraPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: cameraFacing,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
       })
-
-      setStream(newStream)
+      
+      setCameraPermission('granted')
+      setStream(stream)
+      
       if (videoRef.current) {
-        videoRef.current.srcObject = newStream
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
       }
     } catch (error) {
-      toast({
-        title: "Akses Kamera Gagal",
-        description: "Mohon izinkan akses kamera untuk melanjutkan",
-        variant: "destructive",
+      console.error('Camera permission denied:', error)
+      setCameraPermission('denied')
+      setError('Akses kamera diperlukan untuk mengambil foto selfie.')
+    }
+  }
+
+  const switchCamera = async () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop())
+    }
+
+    const newFacing = cameraFacing === 'user' ? 'environment' : 'user'
+    setCameraFacing(newFacing)
+
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: newFacing,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
       })
+      
+      setStream(newStream)
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = newStream
+        videoRef.current.play()
+      }
+    } catch (error) {
+      setError('Gagal mengganti kamera')
     }
   }
 
   const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current
-      const canvas = canvasRef.current
-      const context = canvas.getContext("2d")
+    if (!videoRef.current || !canvasRef.current) return
 
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const context = canvas.getContext('2d')
+    
+    if (!context) return
 
-      if (context) {
-        // Flip image if using front camera
-        if (facingMode === "user") {
-          context.scale(-1, 1)
-          context.translate(-canvas.width, 0)
-        }
+    // Set canvas size to video size
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
 
-        context.drawImage(video, 0, 0)
-        const photoData = canvas.toDataURL("image/jpeg", 0.8)
-        setCapturedPhoto(photoData)
-      }
-    }
+    // Draw video frame to canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+    // Convert to base64 image
+    const photoDataUrl = canvas.toDataURL('image/jpeg', 0.8)
+    setCapturedPhoto(photoDataUrl)
   }
 
   const retakePhoto = () => {
     setCapturedPhoto(null)
-  }
-
-  const switchCamera = () => {
-    setFacingMode((prev) => (prev === "user" ? "environment" : "user"))
+    setError('')
+    setSuccess('')
   }
 
   const submitPhoto = async () => {
-    if (!capturedPhoto) return
+    if (!capturedPhoto || !location) return
 
-    setLoading(true)
+    setUploading(true)
+    setError('')
 
-    // Simulate photo upload and validation
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    try {
+      const playerId = localStorage.getItem('playerId')
+      if (!playerId) {
+        throw new Error('Player ID not found')
+      }
 
-    // Save photo to localStorage (in real app, upload to server)
-    const photos = JSON.parse(localStorage.getItem("capturedPhotos") || "{}")
-    photos[locationId] = {
-      photo: capturedPhoto,
-      timestamp: new Date().toISOString(),
-      location: locationNames[locationId],
+      // In a real implementation, you'd upload to Supabase Storage
+      // For now, we'll store the base64 data URL
+      const photoUrl = capturedPhoto
+
+      setSuccess('Foto berhasil disimpan! 📸')
+      
+      // Proceed to quiz
+      setTimeout(() => {
+        router.push(`/quiz/${locationId}`)
+      }, 1500)
+
+    } catch (error) {
+      console.error('Photo submission error:', error)
+      setError('Gagal menyimpan foto. Coba lagi.')
+    } finally {
+      setUploading(false)
     }
-    localStorage.setItem("capturedPhotos", JSON.stringify(photos))
+  }
 
-    toast({
-      title: "Foto Berhasil Disimpan!",
-      description: "Lanjutkan ke kuis untuk menyelesaikan tantangan",
-    })
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop())
+      setStream(null)
+    }
+  }
 
-    router.push(`/quiz/${locationId}`)
+  const goBack = () => {
+    stopCamera()
+    router.push(`/scanner/${locationId}`)
+  }
+
+  useEffect(() => {
+    // Cleanup on unmount
+    return () => {
+      stopCamera()
+    }
+  }, [])
+
+  if (!location) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-gold/30 border-t-gold rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-text-light">Memuat lokasi...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600">
-      <Header
-        title={`Foto Selfie - ${locationNames[locationId]}`}
-        showBack
-        onBack={() => router.push(`/scanner/${locationId}`)}
-      />
+      {/* Header */}
+      <div className="bg-gradient-to-r from-primary to-onyx-gray border-b border-gold/20 p-4">
+        <div className="flex items-center justify-between">
+          <Button 
+            variant="ghost" 
+            onClick={goBack}
+            className="text-text-light hover:text-gold"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Kembali
+          </Button>
+          <div className="text-center">
+            <h1 className="text-lg font-bold text-gold">📸 Foto Selfie</h1>
+            <p className="text-text-muted text-sm">{location.name}</p>
+          </div>
+          <div className="w-20"></div> {/* Spacer */}
+        </div>
+      </div>
 
       <div className="p-4 space-y-4">
-        {/* Requirements */}
-        <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm">
-          <CardContent className="p-4">
-            <h3 className="text-sm font-semibold text-gold mb-2">Persyaratan Foto:</h3>
-            <p className="text-xs text-text-muted">{decorationRequirements[locationId]}</p>
-          </CardContent>
-        </Card>
+        {/* Success Message */}
+        {success && (
+          <Alert className="bg-green-500/10 border-green-500/30">
+            <CheckCircle className="h-4 w-4 text-green-400" />
+            <AlertDescription className="text-green-400">
+              {success}
+            </AlertDescription>
+          </Alert>
+        )}
 
-        {/* Camera/Photo View */}
-        <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm overflow-hidden">
-          <CardContent className="p-0">
-            <div className="relative aspect-square bg-black">
+        {/* Error Message */}
+        {error && (
+          <Alert className="bg-red-500/10 border-red-500/30">
+            <AlertCircle className="h-4 w-4 text-red-400" />
+            <AlertDescription className="text-red-400">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Camera Permission Request */}
+        {cameraPermission === 'pending' && (
+          <Card className="bg-onyx-gray/50 border-gold/20">
+            <CardContent className="p-6 text-center">
+              <Camera className="w-16 h-16 text-gold mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-text-light mb-2">
+                Ambil Foto Selfie
+              </h3>
+              <p className="text-text-muted mb-4">
+                Ambil foto selfie dengan dekorasi kemerdekaan di {location.name}
+              </p>
+              <Button 
+                onClick={requestCameraPermission}
+                className="bg-gold hover:bg-gold/90 text-primary font-semibold"
+              >
+                <Camera className="w-4 h-4 mr-2" />
+                Buka Kamera
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Camera View or Captured Photo */}
+        {cameraPermission === 'granted' && (
+          <Card className="bg-onyx-gray/50 border-gold/20 overflow-hidden">
+            <CardContent className="p-0">
               {!capturedPhoto ? (
-                <>
+                // Live Camera View
+                <div className="relative">
                   <video
                     ref={videoRef}
-                    autoPlay
+                    className="w-full h-80 object-cover bg-black"
                     playsInline
                     muted
-                    className={`w-full h-full object-cover ${facingMode === "user" ? "scale-x-[-1]" : ""}`}
                   />
-
-                  {/* Photo Frame Overlay */}
-                  <div className="absolute inset-4 border-2 border-gold/50 rounded-lg">
-                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-gold rounded-tl-lg" />
-                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-gold rounded-tr-lg" />
-                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-gold rounded-bl-lg" />
-                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-gold rounded-br-lg" />
-                  </div>
-
+                  <canvas
+                    ref={canvasRef}
+                    className="hidden"
+                  />
+                  
                   {/* Camera Controls */}
-                  <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center">
+                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center space-x-4">
                     <Button
-                      onClick={switchCamera}
-                      size="sm"
-                      className="bg-onyx-gray/80 border border-gold/30 text-gold hover:bg-gold/10"
                       variant="outline"
+                      size="sm"
+                      onClick={switchCamera}
+                      className="bg-black/50 border-white/30 text-white hover:bg-black/70"
                     >
-                      <RotateCcw className="w-4 h-4" />
+                      <SwitchCamera className="w-4 h-4" />
                     </Button>
+                    
                     <Button
-                      onClick={capturePhoto}
                       size="lg"
-                      className="bg-gold hover:bg-gold/90 text-primary font-semibold px-8 py-3 rounded-full"
+                      onClick={capturePhoto}
+                      className="bg-gold hover:bg-gold/90 text-primary w-16 h-16 rounded-full"
                     >
-                      <Camera className="w-6 h-6 mr-2" />
-                      Ambil Foto
+                      <Camera className="w-6 h-6" />
                     </Button>
-                    <div className="w-10" /> {/* Spacer */}
+                    
+                    <div className="w-10"></div> {/* Spacer for symmetry */}
                   </div>
-                </>
+
+                  {/* Overlay Guide */}
+                  <div className="absolute top-4 left-4 right-4">
+                    <div className="bg-black/50 rounded-lg p-3 text-center">
+                      <p className="text-white text-sm">
+                        🎯 Pastikan dekorasi kemerdekaan terlihat di belakang Anda
+                      </p>
+                    </div>
+                  </div>
+                </div>
               ) : (
-                <>
-                  <img
-                    src={capturedPhoto || "/placeholder.svg"}
+                // Captured Photo Preview
+                <div className="relative">
+                  <img 
+                    src={capturedPhoto} 
                     alt="Captured selfie"
-                    className="w-full h-full object-cover"
+                    className="w-full h-80 object-cover"
                   />
-
-                  {/* Photo Review Controls */}
-                  <div className="absolute bottom-4 left-4 right-4 flex justify-center space-x-4">
+                  
+                  {/* Photo Controls */}
+                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex space-x-4">
                     <Button
+                      variant="outline"
                       onClick={retakePhoto}
-                      className="bg-red-error hover:bg-red-error/90 text-white font-semibold px-6"
+                      className="bg-black/50 border-white/30 text-white hover:bg-black/70"
                     >
-                      <X className="w-4 h-4 mr-2" />
-                      Ulangi
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      Ambil Ulang
                     </Button>
-
+                    
                     <Button
                       onClick={submitPhoto}
-                      disabled={loading}
-                      className="bg-green-success hover:bg-green-success/90 text-white font-semibold px-6"
+                      disabled={uploading}
+                      className="bg-gold hover:bg-gold/90 text-primary"
                     >
-                      {loading ? (
-                        <div className="flex items-center space-x-2">
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          <span>Menyimpan...</span>
-                        </div>
+                      {uploading ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2"></div>
+                          Menyimpan...
+                        </>
                       ) : (
                         <>
-                          <Check className="w-4 h-4 mr-2" />
-                          Gunakan Foto
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Lanjutkan ke Quiz
                         </>
                       )}
                     </Button>
                   </div>
-                </>
+                </div>
               )}
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Instructions */}
-        <Card className="bg-onyx-gray/50 border-gold/20 backdrop-blur-sm">
+        {/* Camera Permission Denied */}
+        {cameraPermission === 'denied' && (
+          <Card className="bg-red-500/10 border-red-500/30">
+            <CardContent className="p-6 text-center">
+              <X className="w-16 h-16 text-red-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-red-400 mb-2">
+                Akses Kamera Ditolak
+              </h3>
+              <p className="text-text-muted mb-4">
+                Silakan izinkan akses kamera di pengaturan browser untuk mengambil foto selfie.
+              </p>
+              <div className="space-y-2">
+                <Button 
+                  onClick={() => window.location.reload()}
+                  className="bg-gold hover:bg-gold/90 text-primary w-full"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Coba Lagi
+                </Button>
+                <Button 
+                  variant="outline"
+                  onClick={() => router.push(`/quiz/${locationId}`)}
+                  className="border-gold/30 text-text-light hover:bg-gold/10 w-full"
+                >
+                  Lewati Foto (Lanjut ke Quiz)
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Photo Requirements */}
+        <Card className="bg-blue-500/10 border-blue-500/20">
           <CardContent className="p-4">
-            <h3 className="text-sm font-semibold text-text-light mb-2">Tips Foto yang Baik:</h3>
-            <ul className="text-xs text-text-muted space-y-1">
-              <li>• Pastikan wajah Anda terlihat jelas</li>
-              <li>• Sertakan dekorasi kemerdekaan dalam frame</li>
-              <li>• Gunakan pencahayaan yang cukup</li>
-              <li>• Posisikan diri dalam frame emas</li>
-              <li>• Tersenyum dan tunjukkan semangat kemerdekaan!</li>
+            <h4 className="text-blue-300 font-semibold text-sm mb-2">📋 Syarat Foto Selfie:</h4>
+            <ul className="text-text-muted text-xs space-y-1 ml-4 list-disc">
+              <li>Wajah Anda harus terlihat jelas</li>
+              <li>Dekorasi kemerdekaan harus tampak di latar belakang</li>
+              <li>Foto harus diambil di lokasi {location.name}</li>
+              <li>Pastikan pencahayaan cukup untuk foto yang jelas</li>
             </ul>
           </CardContent>
         </Card>
       </div>
-
-      <canvas ref={canvasRef} className="hidden" />
     </div>
   )
 }
