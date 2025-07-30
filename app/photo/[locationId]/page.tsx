@@ -30,6 +30,12 @@ export default function PhotoCapturePage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [isInitializing, setIsInitializing] = useState(false)
+  
+  // Debug stream state changes
+  useEffect(() => {
+    console.log('📹 Stream state changed:', !!stream, stream ? 'ACTIVE' : 'NULL')
+  }, [stream])
   
   const locationId = params.locationId as string
 
@@ -43,7 +49,53 @@ export default function PhotoCapturePage() {
 
     // Load location data
     loadLocationData()
+    
+    // Auto-request camera permission since user likely came from QR scanner
+    checkAndRequestCameraPermission()
+    
+    // Also try to force initialization after a delay if permission check fails
+    setTimeout(() => {
+      if (cameraPermission === 'pending' && !stream) {
+        console.log('Forcing camera initialization attempt...')
+        setCameraPermission('granted')
+      }
+    }, 1000)
+    
   }, [locationId, router])
+
+  // Watch for when camera permission is granted and video element is available
+  useEffect(() => {
+    console.log('Photo capture useEffect triggered:', { 
+      cameraPermission, 
+      videoElementExists: !!videoRef.current,
+      hasStream: !!stream,
+      capturedPhoto: !!capturedPhoto,
+      isInitializing
+    })
+    
+    if (cameraPermission === 'granted' && videoRef.current && !stream && !capturedPhoto) {
+      console.log('🎥 Conditions met for camera initialization, starting in 300ms...')
+      setIsInitializing(true)
+      
+      // Add a small delay to ensure video element is fully rendered in DOM
+      setTimeout(() => {
+        if (videoRef.current) {
+          console.log('🎥 Video element still available, initializing camera now')
+          initializeCamera()
+        } else {
+          console.error('❌ Video element disappeared during delay')
+          setIsInitializing(false)
+        }
+      }, 300)
+    }
+  }, [cameraPermission, stream, capturedPhoto])
+
+  useEffect(() => {
+    // Cleanup on unmount
+    return () => {
+      stopCamera()
+    }
+  }, [stream])
 
   const loadLocationData = async () => {
     try {
@@ -61,9 +113,128 @@ export default function PhotoCapturePage() {
     }
   }
 
-  const requestCameraPermission = async () => {
+  const checkAndRequestCameraPermission = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      // Try to directly get camera stream to test if permission exists
+      console.log('Checking camera permission...')
+      
+      const testStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: cameraFacing,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      })
+      
+      // If we get here, permission is granted
+      console.log('Camera permission already granted, stopping test stream')
+      testStream.getTracks().forEach(track => track.stop())
+      
+      setCameraPermission('granted')
+      
+    } catch (error) {
+      console.log('Camera permission not granted or not available:', error)
+      setCameraPermission('pending')
+    }
+  }
+
+  const initializeCamera = async (retryCount = 0) => {
+    console.log('initializeCamera called, retry count:', retryCount)
+    
+    if (!videoRef.current) {
+      console.error('Video element not available for photo capture')
+      
+      // Retry up to 5 times with increasing delays
+      if (retryCount < 5) {
+        console.log(`Retrying camera init in ${(retryCount + 1) * 300}ms... (attempt ${retryCount + 1}/5)`)
+        setTimeout(() => {
+          initializeCamera(retryCount + 1)
+        }, (retryCount + 1) * 300)
+      } else {
+        setError('Tidak dapat mengakses kamera. Silakan refresh halaman.')
+        setIsInitializing(false)
+      }
+      return
+    }
+
+    try {
+      console.log('Initializing camera with facing:', cameraFacing)
+      console.log('Video element ready state:', videoRef.current.readyState)
+      
+      // Stop any existing stream first
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
+      
+      const newStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: cameraFacing,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      })
+      
+      console.log('Camera stream obtained successfully')
+      
+      // Double-check video element still exists
+      if (!videoRef.current) {
+        console.error('Video element disappeared during stream creation')
+        newStream.getTracks().forEach(track => track.stop())
+        setIsInitializing(false)
+        return
+      }
+      
+      setStream(newStream)
+      setCameraPermission('granted')
+      
+      // Attach stream to video element
+      videoRef.current.srcObject = newStream
+      
+      // Force the video to load the new source
+      videoRef.current.load()
+      
+      // Wait for video to be ready before playing
+      const handleLoadedMetadata = () => {
+        console.log('Video metadata loaded, starting playback')
+        if (videoRef.current) {
+          videoRef.current.play().then(() => {
+            console.log('Video playback started successfully')
+            setIsInitializing(false)
+          }).catch((playError) => {
+            console.error('Video play error:', playError)
+            setIsInitializing(false)
+          })
+        }
+      }
+      
+      const handleError = (error: Event) => {
+        console.error('Video element error:', error)
+        setError('Gagal memulai kamera. Coba lagi.')
+        setIsInitializing(false)
+      }
+      
+      // Remove any existing event listeners
+      videoRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      videoRef.current.removeEventListener('error', handleError)
+      
+      // Add event listeners
+      videoRef.current.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true })
+      videoRef.current.addEventListener('error', handleError, { once: true })
+      
+    } catch (error) {
+      console.error('Camera initialization error:', error)
+      setCameraPermission('denied')
+      setIsInitializing(false)
+      setError('Akses kamera diperlukan untuk mengambil foto selfie.')
+    }
+  }
+
+  const requestCameraPermission = async () => {
+    setIsInitializing(true)
+    setError('')
+    
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: cameraFacing,
           width: { ideal: 1280 },
@@ -72,22 +243,31 @@ export default function PhotoCapturePage() {
       })
       
       setCameraPermission('granted')
-      setStream(stream)
+      setStream(newStream)
       
       if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play()
+        videoRef.current.srcObject = newStream
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play()
+          setIsInitializing(false)
+        }
       }
     } catch (error) {
       console.error('Camera permission denied:', error)
       setCameraPermission('denied')
+      setIsInitializing(false)
       setError('Akses kamera diperlukan untuk mengambil foto selfie.')
     }
   }
 
   const switchCamera = async () => {
+    console.log('Switching camera...')
+    setIsInitializing(true)
+    
+    // Stop current stream
     if (stream) {
       stream.getTracks().forEach(track => track.stop())
+      setStream(null)
     }
 
     const newFacing = cameraFacing === 'user' ? 'environment' : 'user'
@@ -106,10 +286,15 @@ export default function PhotoCapturePage() {
       
       if (videoRef.current) {
         videoRef.current.srcObject = newStream
-        videoRef.current.play()
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play()
+          setIsInitializing(false)
+        }
       }
     } catch (error) {
+      console.error('Camera switch error:', error)
       setError('Gagal mengganti kamera')
+      setIsInitializing(false)
     }
   }
 
@@ -138,6 +323,11 @@ export default function PhotoCapturePage() {
     setCapturedPhoto(null)
     setError('')
     setSuccess('')
+    
+    // Restart camera if needed
+    if (cameraPermission === 'granted' && !stream) {
+      initializeCamera()
+    }
   }
 
   const submitPhoto = async () => {
@@ -182,13 +372,6 @@ export default function PhotoCapturePage() {
     stopCamera()
     router.push(`/scanner/${locationId}`)
   }
-
-  useEffect(() => {
-    // Cleanup on unmount
-    return () => {
-      stopCamera()
-    }
-  }, [])
 
   if (!location) {
     return (
@@ -257,9 +440,19 @@ export default function PhotoCapturePage() {
               <Button 
                 onClick={requestCameraPermission}
                 className="bg-gold hover:bg-gold/90 text-primary font-semibold"
+                disabled={isInitializing}
               >
-                <Camera className="w-4 h-4 mr-2" />
-                Buka Kamera
+                {isInitializing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Memulai Kamera...
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-4 h-4 mr-2" />
+                    Buka Kamera
+                  </>
+                )}
               </Button>
             </CardContent>
           </Card>
@@ -277,42 +470,87 @@ export default function PhotoCapturePage() {
                     className="w-full h-80 object-cover bg-black"
                     playsInline
                     muted
+                    autoPlay
                   />
                   <canvas
                     ref={canvasRef}
                     className="hidden"
                   />
                   
-                  {/* Camera Controls */}
-                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center space-x-4">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={switchCamera}
-                      className="bg-black/50 border-white/30 text-white hover:bg-black/70"
-                    >
-                      <SwitchCamera className="w-4 h-4" />
-                    </Button>
-                    
-                    <Button
-                      size="lg"
-                      onClick={capturePhoto}
-                      className="bg-gold hover:bg-gold/90 text-primary w-16 h-16 rounded-full"
-                    >
-                      <Camera className="w-6 h-6" />
-                    </Button>
-                    
-                    <div className="w-10"></div> {/* Spacer for symmetry */}
-                  </div>
+                  {/* Loading overlay when initializing */}
+                  {isInitializing && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="w-8 h-8 border-2 border-gold/30 border-t-gold rounded-full animate-spin mx-auto mb-2"></div>
+                        <p className="text-white text-sm">Memulai kamera...</p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Show manual start button if camera is black and not initializing */}
+                  {!stream && !isInitializing && (
+                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                      <div className="text-center">
+                        <Camera className="w-12 h-12 text-gold mx-auto mb-4" />
+                        <p className="text-white text-sm mb-4">Kamera belum aktif</p>
+                        <div className="space-y-2">
+                          <Button
+                            onClick={() => {
+                              console.log('🎥 Manual camera activation requested')
+                              setIsInitializing(true)
+                              initializeCamera()
+                            }}
+                            className="bg-gold hover:bg-gold/90 text-primary"
+                          >
+                            <Camera className="w-4 h-4 mr-2" />
+                            Aktifkan Kamera
+                          </Button>
+                          <p className="text-white text-xs">
+                            Atau gunakan tombol ganti kamera di bawah
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Camera Controls - Always show for fallback */}
+                  {!isInitializing && (
+                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center space-x-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={switchCamera}
+                        className="bg-black/50 border-white/30 text-white hover:bg-black/70"
+                        disabled={isInitializing}
+                      >
+                        <SwitchCamera className="w-4 h-4" />
+                      </Button>
+                      
+                      {stream && (
+                        <Button
+                          size="lg"
+                          onClick={capturePhoto}
+                          className="bg-gold hover:bg-gold/90 text-primary w-16 h-16 rounded-full"
+                          disabled={isInitializing}
+                        >
+                          <Camera className="w-6 h-6" />
+                        </Button>
+                      )}
+                      
+                      <div className="w-10"></div> {/* Spacer for symmetry */}
+                    </div>
+                  )}
 
                   {/* Overlay Guide */}
-                  <div className="absolute top-4 left-4 right-4">
-                    <div className="bg-black/50 rounded-lg p-3 text-center">
-                      <p className="text-white text-sm">
-                        🎯 Pastikan dekorasi kemerdekaan terlihat di belakang Anda
-                      </p>
+                  {!isInitializing && stream && (
+                    <div className="absolute top-4 left-4 right-4">
+                      <div className="bg-black/50 rounded-lg p-3 text-center">
+                        <p className="text-white text-sm">
+                          🎯 Pastikan dekorasi kemerdekaan terlihat di belakang Anda
+                        </p>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               ) : (
                 // Captured Photo Preview
