@@ -31,6 +31,7 @@ export default function PhotoCapturePage() {
   const [success, setSuccess] = useState('')
   const [uploading, setUploading] = useState(false)
   const [isInitializing, setIsInitializing] = useState(false)
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState(false) // New state to prevent flash
   
   // Debug stream state changes
   useEffect(() => {
@@ -70,10 +71,11 @@ export default function PhotoCapturePage() {
       videoElementExists: !!videoRef.current,
       hasStream: !!stream,
       capturedPhoto: !!capturedPhoto,
-      isInitializing
+      isInitializing,
+      isSwitchingCamera
     })
     
-    if (cameraPermission === 'granted' && videoRef.current && !stream && !capturedPhoto) {
+    if (cameraPermission === 'granted' && videoRef.current && !stream && !capturedPhoto && !isSwitchingCamera) {
       console.log('🎥 Conditions met for camera initialization, starting in 300ms...')
       setIsInitializing(true)
       
@@ -88,7 +90,7 @@ export default function PhotoCapturePage() {
         }
       }, 300)
     }
-  }, [cameraPermission, stream, capturedPhoto])
+  }, [cameraPermission, stream, capturedPhoto, isSwitchingCamera])
 
   useEffect(() => {
     // Cleanup on unmount
@@ -153,6 +155,7 @@ export default function PhotoCapturePage() {
       } else {
         setError('Tidak dapat mengakses kamera. Silakan refresh halaman.')
         setIsInitializing(false)
+        setIsSwitchingCamera(false) // Reset switching state on error
       }
       return
     }
@@ -181,6 +184,7 @@ export default function PhotoCapturePage() {
         console.error('Video element disappeared during stream creation')
         newStream.getTracks().forEach(track => track.stop())
         setIsInitializing(false)
+        setIsSwitchingCamera(false)
         return
       }
       
@@ -200,9 +204,11 @@ export default function PhotoCapturePage() {
           videoRef.current.play().then(() => {
             console.log('Video playback started successfully')
             setIsInitializing(false)
+            setIsSwitchingCamera(false) // Reset switching state on success
           }).catch((playError) => {
             console.error('Video play error:', playError)
             setIsInitializing(false)
+            setIsSwitchingCamera(false)
           })
         }
       }
@@ -211,6 +217,7 @@ export default function PhotoCapturePage() {
         console.error('Video element error:', error)
         setError('Gagal memulai kamera. Coba lagi.')
         setIsInitializing(false)
+        setIsSwitchingCamera(false)
       }
       
       // Remove any existing event listeners
@@ -225,6 +232,7 @@ export default function PhotoCapturePage() {
       console.error('Camera initialization error:', error)
       setCameraPermission('denied')
       setIsInitializing(false)
+      setIsSwitchingCamera(false)
       setError('Akses kamera diperlukan untuk mengambil foto selfie.')
     }
   }
@@ -260,17 +268,27 @@ export default function PhotoCapturePage() {
     }
   }
 
+  // FIXED: Set switching state BEFORE clearing stream to prevent flash
   const switchCamera = async () => {
-    console.log('Switching camera...')
-    setIsInitializing(true)
+    console.log('🔄 Switching camera - setting states first...')
     
-    // Stop current stream
+    // CRUCIAL: Set loading states BEFORE clearing stream
+    setIsSwitchingCamera(true)
+    setIsInitializing(true)
+    setError('') // Clear any previous errors
+    
+    // Small delay to ensure state updates are applied
+    await new Promise(resolve => setTimeout(resolve, 10))
+    
+    // Stop current stream AFTER setting loading states
     if (stream) {
+      console.log('🛑 Stopping current stream...')
       stream.getTracks().forEach(track => track.stop())
       setStream(null)
     }
 
     const newFacing = cameraFacing === 'user' ? 'environment' : 'user'
+    console.log(`📱 Switching from ${cameraFacing} to ${newFacing}`)
     setCameraFacing(newFacing)
 
     try {
@@ -282,19 +300,23 @@ export default function PhotoCapturePage() {
         } 
       })
       
+      console.log('✅ New camera stream obtained')
       setStream(newStream)
       
       if (videoRef.current) {
         videoRef.current.srcObject = newStream
         videoRef.current.onloadedmetadata = () => {
+          console.log('✅ Camera switch complete')
           videoRef.current?.play()
           setIsInitializing(false)
+          setIsSwitchingCamera(false) // Reset switching state
         }
       }
     } catch (error) {
-      console.error('Camera switch error:', error)
+      console.error('❌ Camera switch error:', error)
       setError('Gagal mengganti kamera')
       setIsInitializing(false)
+      setIsSwitchingCamera(false) // Reset switching state on error
     }
   }
 
@@ -373,6 +395,10 @@ export default function PhotoCapturePage() {
     router.push(`/scanner/${locationId}`)
   }
 
+  // FIXED: Updated condition to include switching state
+  const showCameraNotActive = !stream && !isInitializing && !isSwitchingCamera && cameraPermission === 'granted'
+  const showLoadingState = isInitializing || isSwitchingCamera
+
   if (!location) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600 flex items-center justify-center">
@@ -440,9 +466,9 @@ export default function PhotoCapturePage() {
               <Button 
                 onClick={requestCameraPermission}
                 className="bg-gold hover:bg-gold/90 text-primary font-semibold"
-                disabled={isInitializing}
+                disabled={showLoadingState}
               >
-                {isInitializing ? (
+                {showLoadingState ? (
                   <>
                     <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2"></div>
                     Memulai Kamera...
@@ -477,18 +503,20 @@ export default function PhotoCapturePage() {
                     className="hidden"
                   />
                   
-                  {/* Loading overlay when initializing */}
-                  {isInitializing && (
+                  {/* FIXED: Loading overlay when initializing OR switching */}
+                  {showLoadingState && (
                     <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                       <div className="text-center">
                         <div className="w-8 h-8 border-2 border-gold/30 border-t-gold rounded-full animate-spin mx-auto mb-2"></div>
-                        <p className="text-white text-sm">Memulai kamera...</p>
+                        <p className="text-white text-sm">
+                          {isSwitchingCamera ? 'Mengganti kamera...' : 'Memulai kamera...'}
+                        </p>
                       </div>
                     </div>
                   )}
                   
-                  {/* Show manual start button if camera is black and not initializing */}
-                  {!stream && !isInitializing && (
+                  {/* FIXED: Show manual start button only when truly needed (no flash) */}
+                  {showCameraNotActive && (
                     <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
                       <div className="text-center">
                         <Camera className="w-12 h-12 text-gold mx-auto mb-4" />
@@ -514,14 +542,14 @@ export default function PhotoCapturePage() {
                   )}
                   
                   {/* Camera Controls - Always show for fallback */}
-                  {!isInitializing && (
+                  {!showLoadingState && (
                     <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center space-x-4">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={switchCamera}
                         className="bg-black/50 border-white/30 text-white hover:bg-black/70"
-                        disabled={isInitializing}
+                        disabled={showLoadingState}
                       >
                         <SwitchCamera className="w-4 h-4" />
                       </Button>
@@ -531,7 +559,7 @@ export default function PhotoCapturePage() {
                           size="lg"
                           onClick={capturePhoto}
                           className="bg-gold hover:bg-gold/90 text-primary w-16 h-16 rounded-full"
-                          disabled={isInitializing}
+                          disabled={showLoadingState}
                         >
                           <Camera className="w-6 h-6" />
                         </Button>
@@ -542,7 +570,7 @@ export default function PhotoCapturePage() {
                   )}
 
                   {/* Overlay Guide */}
-                  {!isInitializing && stream && (
+                  {!showLoadingState && stream && (
                     <div className="absolute top-4 left-4 right-4">
                       <div className="bg-black/50 rounded-lg p-3 text-center">
                         <p className="text-white text-sm">
