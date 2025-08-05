@@ -1,4 +1,4 @@
-// lib/supabase.ts
+// lib/supabase.ts - FIXED VERSION
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -55,6 +55,7 @@ export interface PlayerProgress {
 export const supabaseApi = {
   // Expose supabase client for direct queries
   supabase,
+
   // Validate signup code
   async validateSignupCode(code: string): Promise<{ valid: boolean; message?: string }> {
     try {
@@ -90,7 +91,9 @@ export const supabaseApi = {
         .insert([{
           name: name.trim(),
           phone: phone.trim(),
-          signup_code: code.toUpperCase()
+          signup_code: code.toUpperCase(),
+          current_progress: 0,  // Explicitly set initial progress
+          completed_all: false  // Explicitly set initial completion status
         }])
         .select()
         .single()
@@ -171,7 +174,50 @@ export const supabaseApi = {
     }
   },
 
-  // Submit location completion
+  // 🆕 NEW: Update player summary stats
+  async updatePlayerStats(playerId: number): Promise<void> {
+    try {
+      // Count completed locations for this player
+      const { data: progressData, error: progressError } = await supabase
+        .from('player_progress')
+        .select('location_id')
+        .eq('player_id', playerId)
+        .eq('quiz_passed', true)
+
+      if (progressError) throw progressError
+
+      const completedCount = progressData?.length || 0
+      
+      // Get total location count
+      const { data: locationsData, error: locationsError } = await supabase
+        .from('locations')
+        .select('id')
+
+      if (locationsError) throw locationsError
+
+      const totalLocations = locationsData?.length || 0
+      const hasCompletedAll = completedCount >= totalLocations
+
+      // Update player stats
+      const { error: updateError } = await supabase
+        .from('players')
+        .update({
+          current_progress: completedCount,
+          completed_all: hasCompletedAll
+        })
+        .eq('id', playerId)
+
+      if (updateError) throw updateError
+
+      console.log(`✅ Updated player ${playerId}: progress=${completedCount}/${totalLocations}, completed=${hasCompletedAll}`)
+
+    } catch (error) {
+      console.error('Update player stats error:', error)
+      // Don't throw - this is a background update
+    }
+  },
+
+  // 🔄 UPDATED: Submit location completion WITH stats update
   async submitLocationProgress(playerId: number, locationId: string, photoUrl?: string): Promise<{ success: boolean; message?: string }> {
     try {
       // Check if already completed
@@ -200,11 +246,45 @@ export const supabaseApi = {
 
       if (error) throw error
 
+      // 🆕 UPDATE PLAYER STATS IMMEDIATELY
+      await this.updatePlayerStats(playerId)
+
       return { success: true, message: 'Lokasi berhasil diselesaikan!' }
 
     } catch (error) {
       console.error('Submit progress error:', error)
       return { success: false, message: 'Gagal menyimpan progress' }
+    }
+  },
+
+  // 🆕 NEW: Bulk fix all existing player stats  
+  async fixAllPlayerStats(): Promise<{ fixed: number; errors: string[] }> {
+    let fixedCount = 0
+    const errors: string[] = []
+
+    try {
+      // Get all players
+      const { data: players, error: playersError } = await supabase
+        .from('players')
+        .select('id')
+
+      if (playersError) throw playersError
+
+      // Update each player's stats
+      for (const player of players || []) {
+        try {
+          await this.updatePlayerStats(player.id)
+          fixedCount++
+        } catch (error) {
+          errors.push(`Player ${player.id}: ${error}`)
+        }
+      }
+
+      return { fixed: fixedCount, errors }
+
+    } catch (error) {
+      console.error('Bulk fix error:', error)
+      return { fixed: fixedCount, errors: [`Bulk operation failed: ${error}`] }
     }
   }
 }

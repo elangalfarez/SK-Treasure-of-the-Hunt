@@ -194,6 +194,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary via-onyx-gray to-black-600">
+      
       {/* Header */}
       <div className="bg-gradient-to-r from-primary to-onyx-gray border-b border-gold/20 p-4 text-center">
         <h1 className="text-xl font-bold text-gold">🏆 Dashboard</h1>
