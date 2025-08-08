@@ -1,3 +1,6 @@
+// app/quiz/[locationId]/page.tsx
+// This file handles the quiz functionality for each location in the treasure hunt
+
 "use client"
 
 import { useState, useEffect } from "react"
@@ -137,48 +140,46 @@ export default function QuizPage() {
         throw new Error('Player ID not found')
       }
 
-      const isAnswerCorrect = selectedAnswer === location.correct_answer
-      setIsCorrect(isAnswerCorrect)
+      // Call backend to handle quiz submission
+      const result = await supabaseApi.submitQuizAnswer(
+        parseInt(playerId),
+        locationId,
+        selectedAnswer  // Send A, B, C, or D
+      )
+
+      // Show result
       setShowResult(true)
-
-      // Update attempts count
-      const newAttempts = attempts + 1
-      setAttempts(newAttempts)
-      const attemptsKey = `quiz_attempts_${playerId}_${locationId}`
-      localStorage.setItem(attemptsKey, newAttempts.toString())
-
-      if (isAnswerCorrect) {
-        // Correct answer - complete the location
-        const result = await supabaseApi.submitLocationProgress(
-          parseInt(playerId), 
-          locationId,
-          'photo_placeholder' // In real implementation, use actual photo URL
-        )
-
-        if (result.success) {
-          setSuccess('🎉 Selamat! Anda telah menyelesaikan lokasi ini!')
-          
-          // Clear cooldown and attempts
-          const cooldownKey = `quiz_cooldown_${playerId}_${locationId}`
-          localStorage.removeItem(cooldownKey)
-          localStorage.removeItem(attemptsKey)
-
-          setTimeout(() => {
-            router.push('/dashboard')
-          }, 3000)
-        } else {
-          setError(result.message || 'Gagal menyimpan progress')
-        }
-      } else {
-        // Wrong answer - start cooldown
-        const cooldownKey = `quiz_cooldown_${playerId}_${locationId}`
-        const cooldownDuration = 3 * 60 * 60 * 1000 // 3 hours in milliseconds
-        const cooldownEnd = Date.now() + cooldownDuration
+      
+      if (result.success && result.correct) {
+        // Correct answer
+        setIsCorrect(true)
+        setSuccess('🎉 Selamat! Anda telah menyelesaikan lokasi ini!')
         
-        localStorage.setItem(cooldownKey, cooldownEnd.toString())
-        setCooldownTime(3 * 60 * 60) // 3 hours in seconds
+        // Clear local cooldown and attempts
+        const cooldownKey = `quiz_cooldown_${playerId}_${locationId}`
+        const attemptsKey = `quiz_attempts_${playerId}_${locationId}`
+        localStorage.removeItem(cooldownKey)
+        localStorage.removeItem(attemptsKey)
 
-        setError('❌ Jawaban salah! Anda dapat mencoba lagi dalam 3 jam.')
+        // Redirect after 3 seconds
+        setTimeout(() => {
+          router.push('/dashboard')
+        }, 3000)
+        
+      } else if (result.success && !result.correct) {
+        // Wrong answer
+        setIsCorrect(false)
+        setError(result.message || '❌ Jawaban salah!')
+        
+        // Update local attempts counter
+        const newAttempts = attempts + 1
+        setAttempts(newAttempts)
+        const attemptsKey = `quiz_attempts_${playerId}_${locationId}`
+        localStorage.setItem(attemptsKey, newAttempts.toString())
+        
+      } else {
+        // Backend error
+        setError(result.message || 'Terjadi kesalahan sistem')
       }
 
     } catch (error) {
@@ -187,7 +188,7 @@ export default function QuizPage() {
     } finally {
       setLoading(false)
     }
-  }
+}
 
   const resetQuiz = () => {
     setSelectedAnswer('')

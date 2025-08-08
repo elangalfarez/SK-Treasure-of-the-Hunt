@@ -331,7 +331,7 @@ export const supabaseApi = {
       
       // First Floor locations  
       'cinema-area': { x: 300, y: 80 },
-      'east-dome': { x: 400, y: 105 },
+      'east-dome': { x: 345, y: 95 },
       
       // Add your actual location names here...
     }
@@ -405,23 +405,33 @@ export const supabaseApi = {
   },
 
   // Submit quiz answer
+  // Temporarily replace your submitQuizAnswer function in lib/supabase.ts with this debug version:
+
   async submitQuizAnswer(playerId: number, locationId: string, answer: string): Promise<{ success: boolean; message: string; correct?: boolean }> {
-    try {
-      const { data, error } = await supabase.rpc('submit_quiz_answer', {
-        p_player_id: playerId,
-        p_location_id: locationId,
-        p_answer: answer
-      })
+  try {
+    console.log('🐛 DEBUG: Calling RPC with:', { playerId, locationId, answer })
+    
+    const { data, error } = await supabase.rpc('submit_quiz_answer', {
+      p_player_id: playerId,
+      p_location_id: locationId,
+      p_answer: answer
+    })
 
-      if (error) {
-        return { success: false, message: error.message }
-      }
+    console.log('🐛 DEBUG: RPC Response:', { data, error })
 
-      return data
-    } catch (error) {
-      return { success: false, message: 'Terjadi kesalahan sistem' }
+    if (error) {
+      console.log('🐛 DEBUG: Error detected:', error)
+      return { success: false, message: `RPC Error: ${error.message}` }
     }
-  },
+
+    console.log('🐛 DEBUG: Returning data:', data)
+    return data
+    
+  } catch (error) {
+    console.log('🐛 DEBUG: Catch block triggered:', error)
+    return { success: false, message: `Catch Error: ${String(error)}` }
+  }
+},
 
   // Upload photo
   async uploadPhoto(playerId: number, locationId: string, photoBlob: Blob): Promise<{ success: boolean; message: string; photoUrl?: string }> {
