@@ -1,4 +1,4 @@
-// lib/supabase.ts - FIXED VERSION WITH CORRECT FLOOR ID
+// lib/supabase.ts - FIXED VERSION COMBINING MALL_FLOORS + TENANT_LOCATIONS
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -149,138 +149,119 @@ export const supabaseApi = {
     }
   },
 
-  // FIXED: Get floor layouts with correct floor ID mapping
+  // FIXED: Hybrid data loading from both tables
   async getFloorLayouts(): Promise<FloorLayout[]> {
     try {
-      console.log('🏢 FIXED: Starting getFloorLayouts...')
+      console.log('🏢 HYBRID: Starting getFloorLayouts with hybrid approach...')
 
-      // STEP 1: Try mall_floors table first
-      const { data: mallFloorsData, error: mallFloorsError } = await supabase
+      // STEP 1: Get floor structure from mall_floors table
+      const { data: floorStructures, error: floorStructuresError } = await supabase
         .from('mall_floors')
-        .select('*')
+        .select('id, floor_code, floor_name, floor_number, total_tenants, viewbox, svg_background_color')
+        .eq('is_active', true)
         .order('floor_number', { ascending: true })
 
-      if (!mallFloorsError && mallFloorsData && mallFloorsData.length > 0) {
-        console.log('✅ Using mall_floors table data:', mallFloorsData)
-        return mallFloorsData
-      }
-
-      console.log('🔄 mall_floors not available, fetching from tenant_locations...')
-      
-      // STEP 2: Get floor data from tenant_locations with CORRECT floor_id
-      const { data: tenantData, error: tenantError } = await supabase
-        .from('tenant_locations')
-        .select('id, floor_id, svg_path_data, center_coordinates, fill_color, stroke_color')
-        .not('svg_path_data', 'is', null)
-
-      console.log('📊 Tenant data result:', { 
-        count: tenantData?.length || 0, 
-        error: tenantError?.message,
-        uniqueFloorIds: tenantData ? Array.from(new Set(tenantData.map(t => t.floor_id))) : []
-      })
-
-      if (tenantError || !tenantData || tenantData.length === 0) {
-        console.error('❌ No tenant_locations data found:', tenantError)
+      if (floorStructuresError || !floorStructures) {
+        console.error('❌ HYBRID: Error getting floor structures:', floorStructuresError)
         return []
       }
 
-      // STEP 3: Get unique floor IDs from your actual database
-      const uniqueFloorIds = Array.from(new Set(tenantData.map(item => item.floor_id)))
-      console.log('🏢 Unique floor IDs found:', uniqueFloorIds)
+      console.log(`📊 HYBRID: Found ${floorStructures.length} floor structures:`, 
+        floorStructures.map(f => ({ code: f.floor_code, name: f.floor_name }))
+      )
 
-      // STEP 4: Create floor layouts using REAL floor IDs from your database
-      const floorLayouts: FloorLayout[] = []
+      // STEP 2: Get SVG path data from tenant_locations table
+      const { data: tenantLocations, error: tenantLocationsError } = await supabase
+        .from('tenant_locations')
+        .select('floor_id, svg_path_data')
+        .not('svg_path_data', 'is', null)
 
-      // From your SQL results, the actual floor_id is: '2f08998d-357e-4e77-ab9b-eb438868d4f2'
-      // Since you only have one floor with 505 records, let's create different logical floors
+      if (tenantLocationsError || !tenantLocations) {
+        console.error('❌ HYBRID: Error getting tenant locations:', tenantLocationsError)
+        return []
+      }
+
+      console.log(`📊 HYBRID: Found ${tenantLocations.length} tenant locations with SVG data`)
+
+      // STEP 3: Group SVG data by floor_id
+      const svgDataByFloor = new Map<string, string>()
       
-      uniqueFloorIds.forEach((floorId, index) => {
-        const floorData = tenantData.filter(item => item.floor_id === floorId)
-        
-        if (floorData.length === 0) return
-
-        // Combine all SVG path data for this floor
-        const combinedSvgPaths = floorData
-          .map(item => item.svg_path_data)
-          .filter(Boolean)
-          .join(' ')
-
-        if (!combinedSvgPaths) {
-          console.warn(`⚠️ No SVG data for floor: ${floorId}`)
-          return
-        }
-
-        // Since you have only one physical floor but need GF/UG/FF for the treasure hunt,
-        // we'll create multiple logical floors from the same data
-        const logicalFloors = [
-          { code: 'GF', name: 'Ground Floor', number: 0 },
-          { code: 'UG', name: 'Underground', number: -1 },
-          { code: 'FF', name: 'First Floor', number: 1 }
-        ]
-
-        logicalFloors.forEach(floorInfo => {
-          const layout: FloorLayout = {
-            id: `${floorId}-${floorInfo.code}`,
-            floor_id: floorId, // Use the REAL floor_id from your database
-            floor_code: floorInfo.code,
-            floor_name: floorInfo.name,
-            floor_number: floorInfo.number,
-            total_tenants: floorData.length,
-            viewbox: '0 0 500 400', // Adjusted viewbox based on your coordinate data
-            svg_background_color: '#1F2937',
-            svg_path_data: combinedSvgPaths
-          }
-
-          console.log(`✅ Created floor layout for ${floorInfo.code}:`, {
-            id: layout.id,
-            floor_id: layout.floor_id,
-            code: layout.floor_code,
-            name: layout.floor_name,
-            dataLength: layout.svg_path_data.length
-          })
-
-          floorLayouts.push(layout)
-        })
+      tenantLocations.forEach(tenant => {
+        const existing = svgDataByFloor.get(tenant.floor_id) || ''
+        svgDataByFloor.set(tenant.floor_id, existing + ' ' + tenant.svg_path_data)
       })
 
-      console.log(`🎉 Final result: ${floorLayouts.length} floor layouts created`)
-      return floorLayouts.sort((a, b) => a.floor_number - b.floor_number)
+      console.log(`📊 HYBRID: Grouped SVG data for floors:`, Array.from(svgDataByFloor.keys()))
+
+      // STEP 4: Combine floor structures with SVG data
+      const floorLayouts: FloorLayout[] = []
+
+      for (const floorStructure of floorStructures) {
+        // Get the corresponding SVG data
+        const svgData = svgDataByFloor.get(floorStructure.id) || ''
+        
+        if (!svgData) {
+          console.warn(`⚠️ HYBRID: No SVG data found for floor ${floorStructure.floor_code} (${floorStructure.id})`)
+          // Still create the layout but with empty SVG data
+        }
+
+        const layout: FloorLayout = {
+          id: floorStructure.id,
+          floor_id: floorStructure.id,
+          floor_code: floorStructure.floor_code,
+          floor_name: floorStructure.floor_name,
+          floor_number: floorStructure.floor_number,
+          total_tenants: floorStructure.total_tenants || 0,
+          viewbox: floorStructure.viewbox || '0 0 500 325',
+          svg_background_color: floorStructure.svg_background_color || '#1a1a1a',
+          svg_path_data: svgData.trim()
+        }
+
+        console.log(`✅ HYBRID: Created layout for ${floorStructure.floor_code}:`, {
+          id: layout.id,
+          floor_code: layout.floor_code,
+          floor_name: layout.floor_name,
+          viewbox: layout.viewbox,
+          hasData: !!layout.svg_path_data,
+          dataLength: layout.svg_path_data.length
+        })
+
+        floorLayouts.push(layout)
+      }
+
+      console.log(`🎉 HYBRID: Successfully created ${floorLayouts.length} floor layouts`)
+      return floorLayouts
 
     } catch (error) {
-      console.error('❌ Get floor layouts error:', error)
+      console.error('❌ HYBRID: Get floor layouts error:', error)
       return []
     }
   },
 
-  // FIXED: Get specific floor layout
+  // FIXED: Get specific floor layout using hybrid approach
   async getFloorLayout(floorCode: string): Promise<FloorLayout | null> {
     try {
-      console.log(`🔍 FIXED: Getting floor layout for: ${floorCode}`)
+      console.log(`🔍 HYBRID: Getting floor layout for: "${floorCode}"`)
+      
       const layouts = await this.getFloorLayouts()
-      
-      console.log('Available layouts:', layouts.map(l => ({ 
-        code: l.floor_code, 
-        name: l.floor_name,
-        hasData: !!l.svg_path_data,
-        dataLength: l.svg_path_data?.length || 0 
-      })))
-      
       const result = layouts.find(layout => layout.floor_code === floorCode) || null
       
       if (result) {
-        console.log(`✅ Found floor layout for ${floorCode}:`, {
-          name: result.floor_name,
+        console.log(`✅ HYBRID: Found floor layout for ${floorCode}:`, {
+          id: result.id,
+          floor_name: result.floor_name,
+          viewbox: result.viewbox,
           hasData: !!result.svg_path_data,
-          dataLength: result.svg_path_data?.length || 0,
-          viewbox: result.viewbox
+          dataLength: result.svg_path_data?.length || 0
         })
       } else {
-        console.log(`❌ No floor layout found for: ${floorCode}`)
+        console.error(`❌ HYBRID: No floor layout found for: ${floorCode}`)
+        console.log('Available floors:', layouts.map(l => l.floor_code))
       }
       
       return result
     } catch (error) {
-      console.error('Get floor layout error:', error)
+      console.error('❌ HYBRID: Get floor layout error:', error)
       return null
     }
   },
@@ -316,7 +297,7 @@ export const supabaseApi = {
           status = 'available'
         }
 
-        // Get REAL coordinates based on your coordinate data
+        // Get REAL coordinates based on viewbox 500x325
         const coordinates = this.getRealLocationCoordinates(location.id, location.name, location.floor)
 
         const result = {
@@ -336,25 +317,23 @@ export const supabaseApi = {
     }
   },
 
-  // UPDATED: Get real coordinates based on your database structure
+  // UPDATED: Get coordinates for viewbox 500x325
   getRealLocationCoordinates(locationId: string, locationName: string, floor: string): { x: number; y: number } {
-    // Based on your center_coordinates data, the viewbox appears to be around 500x400
-    // Your coordinates range from x:56-470, y:53-272
-    
+    // Based on viewbox 500x325 from your mall_floors data
     const coordinateMap: { [key: string]: { x: number; y: number } } = {
-      // Ground Floor locations - Based on center coordinates from your data
-      'main-lobby': { x: 250, y: 200 }, // Centered position
-      'south-lobby': { x: 400, y: 300 }, // South area
-      'u-walk': { x: 150, y: 250 }, // West area
+      // Ground Floor locations - Adjusted for 500x325 viewbox
+      'main-lobby': { x: 250, y: 160 },    // Center area
+      'south-lobby': { x: 400, y: 250 },   // South-east area
+      'u-walk': { x: 150, y: 200 },        // West area
       
-      // Underground locations (reusing some coordinates)
-      'food-court': { x: 350, y: 150 },
+      // Underground locations
+      'food-court': { x: 350, y: 120 },
       
       // First Floor locations  
-      'cinema-area': { x: 300, y: 100 },
-      'east-dome': { x: 450, y: 200 }, // Based on console showing "East Dome"
+      'cinema-area': { x: 300, y: 80 },
+      'east-dome': { x: 450, y: 160 },
       
-      // Add more based on your actual location names...
+      // Add your actual location names here...
     }
 
     // Try exact match first
@@ -373,23 +352,23 @@ export const supabaseApi = {
       }
     }
 
-    // Fallback coordinates based on floor and name hash
+    // Fallback coordinates for 500x325 viewbox
     console.warn(`⚠️ Using fallback coordinates for: ${locationName}`)
     return this.generateFallbackCoordinates(locationName, floor)
   },
 
-  // Generate fallback coordinates that fit your viewbox
+  // UPDATED: Generate fallback coordinates for 500x325 viewbox
   generateFallbackCoordinates(locationName: string, floor: string): { x: number; y: number } {
     const hash = locationName.split('').reduce((a, b) => {
       a = ((a << 5) - a) + b.charCodeAt(0)
       return a & a
     }, 0)
 
-    // Based on your data: x ranges 56-470, y ranges 53-272
+    // Coordinate ranges for 500x325 viewbox with margin
     const floorBase = {
-      'GF': { centerX: 250, centerY: 200, radiusX: 150, radiusY: 100 },
-      'UG': { centerX: 250, centerY: 200, radiusX: 120, radiusY: 80 },
-      'FF': { centerX: 250, centerY: 200, radiusX: 140, radiusY: 90 }
+      'GF': { centerX: 250, centerY: 160, radiusX: 180, radiusY: 120 },
+      'UG': { centerX: 250, centerY: 160, radiusX: 150, radiusY: 100 },
+      'FF': { centerX: 250, centerY: 160, radiusX: 170, radiusY: 110 }
     }
 
     const base = floorBase[floor as keyof typeof floorBase] || floorBase['GF']
@@ -397,10 +376,10 @@ export const supabaseApi = {
     const x = base.centerX + ((hash % (base.radiusX * 2)) - base.radiusX)
     const y = base.centerY + (((hash >> 8) % (base.radiusY * 2)) - base.radiusY)
     
-    // Keep within your actual coordinate bounds: x:56-470, y:53-272
+    // Keep within viewbox bounds: 50-450 for x, 25-300 for y
     return { 
-      x: Math.max(56, Math.min(470, x)), 
-      y: Math.max(53, Math.min(272, y)) 
+      x: Math.max(50, Math.min(450, x)), 
+      y: Math.max(25, Math.min(300, y)) 
     }
   },
 
