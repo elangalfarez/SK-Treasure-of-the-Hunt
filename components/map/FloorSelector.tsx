@@ -46,15 +46,15 @@ const FloorSelector: React.FC<FloorSelectorProps> = ({
     },
     { 
       id: 'UG' as const, 
-      name: 'Underground', 
+      name: 'Upper Ground', 
       label: 'UG',
-      description: 'Lantai Bawah'
+      description: 'Upper Ground'
     },
     { 
       id: 'FF' as const, 
       name: 'First Floor', 
       label: 'FF',
-      description: 'Lantai Satu'
+      description: 'Lantai Atas'
     }
   ];
 
