@@ -3,6 +3,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { Location, FloorLayout } from '@/lib/supabase';
 import { ZoomIn, ZoomOut, RotateCcw, MapPin, CheckCircle, Lock, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
+import SVGTenantRenderer from './SVGTenantRenderer'
 
 interface FloorMapProps {
   locations: Location[];
@@ -135,19 +136,20 @@ const FloorMap: React.FC<FloorMapProps> = ({
     locationsCount: floorLocations.length,
     locations: floorLocations.map(l => ({ name: l.name, coords: l.coordinates }))
   });
+    // Add this inside FloorMap component, before the return statement
+    const getFloorId = (floorCode: string): string => {
+      const mappings = {
+        'GF': '2f08998d-357e-4e77-ab9b-eb438868d4f2',
+        'UG': '4235263c-81f9-410f-b2bf-04279927fe81', 
+        'FF': '1d31727d-564b-4930-b7fb-76ea60dda101' // TODO: Get your actual FF floor ID
+      }
+      return mappings[floorCode as keyof typeof mappings] || ''
+    }
+
+    const currentFloorId = getFloorId(selectedFloor)
 
   return (
     <div className="relative w-full h-full bg-accent rounded-2xl overflow-hidden">
-      {/* Debug Info */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="absolute top-2 left-2 bg-black/90 text-white p-2 rounded text-xs font-mono z-50 max-w-xs">
-          <div>Floor: {selectedFloor}</div>
-          <div>Layout: {hasFloorLayout ? '✅ Found' : '❌ Missing'}</div>
-          <div>SVG: {floorLayout?.svg_path_data?.length || 0} chars</div>
-          <div>ViewBox: {floorLayout?.viewbox || 'N/A'}</div>
-          <div>Locations: {floorLocations.length}</div>
-        </div>
-      )}
 
       {/* Show error message if no floor layout */}
       {!hasFloorLayout && (
@@ -230,18 +232,11 @@ const FloorMap: React.FC<FloorMapProps> = ({
               rx="8"
             />
 
-            {/* RENDER REAL SVG PATH DATA if available */}
-            {hasFloorLayout && (
-              <g 
-                dangerouslySetInnerHTML={{ 
-                  __html: floorLayout.svg_path_data 
-                }}
-                style={{
-                  fill: 'none',
-                  stroke: '#D4AF37',
-                  strokeWidth: '1',
-                  opacity: 0.8
-                }}
+            {/* RENDER ACTUAL TENANT BOUNDARIES */}
+            {currentFloorId && (
+              <SVGTenantRenderer 
+                floorId={currentFloorId}
+                className="tenant-layer"
               />
             )}
 
@@ -335,12 +330,6 @@ const FloorMap: React.FC<FloorMapProps> = ({
                          location.status === 'available' ? '→ Tap untuk mulai' : 
                          '🔒 Terkunci'}
                       </div>
-                      {/* Debug coordinates */}
-                      {process.env.NODE_ENV === 'development' && (
-                        <div className="text-xs text-text-muted mt-1">
-                          ({location.coordinates?.x || 'N/A'}, {location.coordinates?.y || 'N/A'})
-                        </div>
-                      )}
                     </div>
                     
                     {/* Speech bubble pointer */}
@@ -443,12 +432,6 @@ const FloorMap: React.FC<FloorMapProps> = ({
             <div className="w-2 h-2 bg-gold rounded-full animate-ping"></div>
           )}
         </div>
-        {/* Debug viewbox info */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="text-xs text-text-muted mt-1">
-            ViewBox: {floorLayout?.viewbox || 'N/A'}
-          </div>
-        )}
       </div>
 
       {/* Pan/Zoom Instructions */}

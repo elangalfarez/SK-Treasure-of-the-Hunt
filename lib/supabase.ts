@@ -322,16 +322,16 @@ export const supabaseApi = {
     // Based on viewbox 500x325 from your mall_floors data
     const coordinateMap: { [key: string]: { x: number; y: number } } = {
       // Ground Floor locations - Adjusted for 500x325 viewbox
-      'main-lobby': { x: 250, y: 160 },    // Center area
-      'south-lobby': { x: 400, y: 250 },   // South-east area
-      'u-walk': { x: 150, y: 200 },        // West area
+      'main-lobby': { x: 250, y: 70 },    
+      'south-lobby': { x: 190, y: 270 },   
+      'u-walk': { x: 375, y: 270 },        
       
       // Underground locations
       'food-court': { x: 350, y: 120 },
       
       // First Floor locations  
       'cinema-area': { x: 300, y: 80 },
-      'east-dome': { x: 450, y: 160 },
+      'east-dome': { x: 400, y: 105 },
       
       // Add your actual location names here...
     }

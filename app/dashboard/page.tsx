@@ -366,12 +366,6 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* Debug Info (removable in production) */}
-        <div className="mt-8 p-4 bg-gray-800 rounded text-xs text-gray-400">
-          <p>🔍 Debug: Player ID {localStorage?.getItem('playerId')}</p>
-          <p>📊 Progress: {completedCount}/{totalCount} locations</p>
-          <p>🎯 Next: {locations.find((l, i) => getLocationStatus(l, i) === 'available')?.name || 'All complete!'}</p>
-        </div>
       </div>
     </div>
   )
