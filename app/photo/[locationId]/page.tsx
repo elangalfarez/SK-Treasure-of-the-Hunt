@@ -461,7 +461,7 @@ export default function PhotoCapturePage() {
                 Ambil Foto Selfie
               </h3>
               <p className="text-text-muted mb-4">
-                Ambil foto selfie dengan dekorasi kemerdekaan di {location.name}
+                Ambil foto selfie dengan dekorasi kemerdekaan/tempat menemukan treasure hunt di {location.name}
               </p>
               <Button 
                 onClick={requestCameraPermission}
