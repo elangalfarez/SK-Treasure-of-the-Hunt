@@ -231,10 +231,10 @@ export default function QRScannerPage() {
     
     // Map QR codes to location IDs (implementing location-specific validation)
     const locationQRCodes = {
-      'main_lobby': ['TREASUREHUNT_MAIN_LOBBY_2025', 'MERDEKA_MAIN_LOBBY', 'TEST123'],
-      'south_lobby': ['TREASUREHUNT_SOUTH_LOBBY_2025', 'MERDEKA_SOUTH_LOBBY', 'TEST123'],
-      'east_dome': ['TREASUREHUNT_EAST_DOME_2025', 'MERDEKA_EAST_DOME', 'TEST123'],
-      'u_walk': ['TREASUREHUNT_U_WALK_2025', 'MERDEKA_U_WALK', 'TEST123']
+      'main_lobby': ['TREASURE_HUNT_MAIN_LOBBY_2025', 'MERDEKA_MAIN_LOBBY'],
+      'south_lobby': ['TREASUREHUNT_SOUTH_LOBBY_2025', 'MERDEKA_SOUTH_LOBBY'],
+      'east_dome': ['TREASUREHUNT_EAST_DOME_2025', 'MERDEKA_EAST_DOME'],
+      'u_walk': ['TREASUREHUNT_U_WALK_2025', 'MERDEKA_U_WALK']
     }
     
     // Get valid codes for current location
@@ -474,9 +474,6 @@ export default function QRScannerPage() {
                     className="text-center text-lg font-mono tracking-wider bg-primary/50 border-gold/30 text-text-light placeholder:text-text-muted focus:border-gold"
                     autoFocus
                   />
-                  <p className="text-xs text-text-muted mt-2 text-center">
-                    💡 Untuk testing: gunakan "TEST123"
-                  </p>
                 </div>
 
                 <div className="flex gap-3">
