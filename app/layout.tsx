@@ -1,10 +1,10 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
+// import { Inter } from "next/font/google" // Temporarily disabled for development
 import "./globals.css"
 import { Toaster } from "@/components/ui/toaster"
 
-const inter = Inter({ subsets: ["latin"] })
+// const inter = Inter({ subsets: ["latin"] }) // Temporarily disabled
 
 export const metadata: Metadata = {
   title: "Treasure Hunt - Supermal Karawaci",
@@ -41,7 +41,7 @@ export default function RootLayout({
         <meta name="format-detection" content="telephone=no" />
         <link rel="manifest" href="/manifest.json" />
       </head>
-      <body className={`${inter.className} bg-primary text-text-light`}>
+      <body className={`bg-primary text-text-light`}>
         {children}
         <Toaster />
       </body>
