@@ -257,7 +257,7 @@ export default function DashboardPage() {
                     {location.name}
                   </h4>
                   <p className="text-xs text-text-muted line-clamp-2">
-                    Quiz: {location.clue.substring(0, 40)}...
+                    Clue: {location.clue.substring(0, 40)}...
                   </p>
                   {status === "available" && (
                     <div className="mt-2 text-xs text-gold font-medium">
