@@ -38,6 +38,7 @@ export interface Location {
   quiz_options: string[]
   correct_answer: string
   unlock_order: number
+  clue: string
   coordinates?: {
     x: number
     y: number

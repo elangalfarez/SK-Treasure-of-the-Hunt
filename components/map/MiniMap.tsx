@@ -19,8 +19,8 @@ const MiniMap: React.FC<MiniMapProps> = ({
 }) => {
   const floorLocations = locations.filter(loc => loc.floor === selectedFloor);
 
-  const getLocationIcon = (location: Location) => {
-    switch (location.status) {
+  const getLocationIcon = (status: string) => {
+    switch (status) {
       case 'completed':
         return <CheckCircle className="w-4 h-4 text-green-success" />;
       case 'available':
@@ -113,11 +113,11 @@ const MiniMap: React.FC<MiniMapProps> = ({
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: index * 0.1 }}
-            className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all duration-300 disabled:cursor-not-allowed ${getButtonStyle(location.status)}`}
+            className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all duration-300 disabled:cursor-not-allowed ${getButtonStyle(location.status ?? 'unknown')}`}
           >
             <div className="flex items-center space-x-3 min-w-0">
               <div className="flex-shrink-0">
-                {getLocationIcon(location)}
+                {getLocationIcon(location.status ?? 'unknown')}
               </div>
               
               <div className="flex-1 text-left min-w-0">
@@ -142,8 +142,8 @@ const MiniMap: React.FC<MiniMapProps> = ({
             
             {/* Status Badge */}
             <div className="flex-shrink-0 ml-2">
-              <span className={`text-xs px-2 py-1 rounded-full border ${getStatusColor(location.status)}`}>
-                {getStatusText(location.status)}
+              <span className={`text-xs px-2 py-1 rounded-full border ${getStatusColor(location.status ?? 'unknown')}`}>
+                {getStatusText(location.status ?? 'unknown')}
               </span>
             </div>
 

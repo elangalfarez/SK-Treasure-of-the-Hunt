@@ -192,16 +192,24 @@ export default function QRScannerPage() {
     }
   }
 
-  const toggleFlash = async () => {
-    if (qrScannerRef.current && qrScannerRef.current.hasFlash()) {
-      try {
-        await qrScannerRef.current.toggleFlash()
-        setFlashOn(!flashOn)
-      } catch (error) {
-        console.error('Flash toggle error:', error)
-      }
-    }
+ const toggleFlash = async () => {
+  const scanner = qrScannerRef.current;
+  // basic null/type guards
+  if (!scanner || typeof scanner.hasFlash !== "function") return;
+
+  try {
+    // WAIT for the boolean result instead of checking the Promise object
+    const has = await scanner.hasFlash();
+    if (!has) return; // device doesn't have flash
+
+    // toggle and flip UI state
+    await scanner.toggleFlash();
+    setFlashOn(prev => !prev);
+  } catch (err) {
+    console.error("toggleFlash error:", err);
   }
+};
+
 
   const stopScanning = () => {
     console.log('Stopping scanner...')

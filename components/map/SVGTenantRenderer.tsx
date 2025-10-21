@@ -67,20 +67,23 @@ export default function SVGTenantRenderer({ floorId, className = "" }: SVGTenant
         return
       }
 
-      // Filter out empty SVG data
-      const validTenants = data?.filter(t => 
+      // Filter out empty SVG data and map tenants property to single object
+      const validTenants = (data?.filter(t => 
         t.svg_path_data && t.svg_path_data.trim() !== ''
-      ) || []
+      ) || []).map(t => ({
+        ...t,
+        tenants: Array.isArray(t.tenants) ? t.tenants[0] : t.tenants
+      }))
 
       //console.log(`✅ Found ${validTenants.length} tenants with SVG data`)
       //console.log(`🏆 Found ${validTenants.filter(t => t.is_anchor_tenant).length} anchor tenants`)
-      
+
       // Log anchor tenant details for debugging
       const anchors = validTenants.filter(t => t.is_anchor_tenant)
       anchors.forEach(anchor => {
       //  console.log(`🏪 Anchor: ${anchor.unit_number} → "${anchor.tenants?.brand_name || 'No brand name'}"`)
       })
-      
+
       setTenants(validTenants)
 
     } catch (error) {

@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ArrowLeft, User } from "lucide-react"
+import type { ReactNode } from "react"
 
 interface HeaderProps {
   title: string
@@ -10,9 +11,17 @@ interface HeaderProps {
   progress?: number
   showBack?: boolean
   onBack?: () => void
+  action?: ReactNode  // <<--- added
 }
 
-export default function Header({ title, playerName, progress, showBack, onBack }: HeaderProps) {
+export default function Header({
+  title,
+  playerName,
+  progress,
+  showBack,
+  onBack,
+  action, // <<--- include it here
+}: HeaderProps) {
   return (
     <div className="bg-gradient-to-r from-primary to-onyx-gray border-b border-gold/20 p-4">
       <div className="flex items-center justify-between mb-2">
@@ -30,12 +39,16 @@ export default function Header({ title, playerName, progress, showBack, onBack }
           <h1 className="text-xl font-bold text-gold">{title}</h1>
         </div>
 
-        {playerName && (
-          <div className="flex items-center space-x-2 text-text-light">
-            <User className="w-4 h-4" />
-            <span className="text-sm font-medium">{playerName}</span>
-          </div>
-        )}
+        {/* Right side: render action (if any) and playerName */}
+        <div className="flex items-center space-x-3">
+          {action && <div>{action}</div>}
+          {playerName && (
+            <div className="flex items-center space-x-2 text-text-light">
+              <User className="w-4 h-4" />
+              <span className="text-sm font-medium">{playerName}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {progress !== undefined && (

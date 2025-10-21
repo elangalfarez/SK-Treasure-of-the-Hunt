@@ -1,14 +1,8 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  images: {
-    unoptimized: true,
-  },
-}
-
-export default nextConfig
+// next.config.mjs — ES module variant
+export default {
+  basePath: '/treasurehunt',
+  assetPrefix: '/treasurehunt/',
+  reactStrictMode: true,
+  // Optional: if you want a smaller, self-contained production build (see notes below)
+  // output: 'standalone',
+};
