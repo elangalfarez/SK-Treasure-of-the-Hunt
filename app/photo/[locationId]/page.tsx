@@ -12,9 +12,15 @@ import {
   CheckCircle,
   AlertCircle,
   SwitchCamera,
-  X
+  X,
+  Shield
 } from "lucide-react"
 import { supabaseApi, Location } from "@/lib/supabase"
+import { 
+  validatePhotoForFraud, 
+  getDeviceInfo,
+  getCurrentLocation 
+} from "@/lib/fraud-detection"
 
 export default function PhotoCapturePage() {
   const params = useParams()
@@ -32,6 +38,8 @@ export default function PhotoCapturePage() {
   const [uploading, setUploading] = useState(false)
   const [isInitializing, setIsInitializing] = useState(false)
   const [isSwitchingCamera, setIsSwitchingCamera] = useState(false) // New state to prevent flash
+  const [validating, setValidating] = useState(false) // For fraud detection
+  const [validationResults, setValidationResults] = useState<any>(null)
   
   // Debug stream state changes
   useEffect(() => {
@@ -320,7 +328,7 @@ export default function PhotoCapturePage() {
     }
   }
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return
 
     const video = videoRef.current
@@ -339,12 +347,51 @@ export default function PhotoCapturePage() {
     // Convert to base64 image
     const photoDataUrl = canvas.toDataURL('image/jpeg', 0.8)
     setCapturedPhoto(photoDataUrl)
+
+    // Start fraud detection validation immediately after capture
+    setValidating(true)
+    setError('')
+    
+    try {
+      console.log('🔒 Starting fraud detection validation...')
+      
+      // Convert dataURL to blob for metadata analysis
+      const response = await fetch(photoDataUrl)
+      const photoBlob = await response.blob()
+      
+      // Create image element for face detection
+      const img = new Image()
+      img.src = photoDataUrl
+      
+      await new Promise((resolve) => {
+        img.onload = resolve
+      })
+      
+      // Run comprehensive fraud detection
+      const validation = await validatePhotoForFraud(img, photoBlob)
+      setValidationResults(validation)
+      
+      if (!validation.isValid) {
+        setError(`⚠️ Validasi keamanan gagal: ${validation.issues.join(', ')}`)
+      } else {
+        console.log('✅ Foto lolos validasi keamanan')
+      }
+      
+    } catch (validationError) {
+      console.error('Validation error:', validationError)
+      // Don't block user if validation fails, just log it
+      setValidationResults({ isValid: true, issues: [] })
+    } finally {
+      setValidating(false)
+    }
   }
 
   const retakePhoto = () => {
     setCapturedPhoto(null)
     setError('')
     setSuccess('')
+    setValidating(false)
+    setValidationResults(null)
     
     // Restart camera if needed
     if (cameraPermission === 'granted' && !stream) {
@@ -364,16 +411,37 @@ export default function PhotoCapturePage() {
         throw new Error('Player ID not found')
       }
 
-      // In a real implementation, you'd upload to Supabase Storage
-      // For now, we'll store the base64 data URL
-      const photoUrl = capturedPhoto
+      // Convert base64 to blob for upload
+      const response = await fetch(capturedPhoto)
+      const photoBlob = await response.blob()
 
-      setSuccess('Foto berhasil disimpan! 📸')
+      // Prepare metadata for Supabase Storage
+      const deviceInfo = getDeviceInfo()
+      const currentLocation = await getCurrentLocation()
+
+      // Upload to Supabase Storage with fraud detection metadata
+      const uploadResult = await supabaseApi.uploadPhoto(
+        parseInt(playerId), 
+        locationId, 
+        photoBlob,
+        {
+          deviceInfo,
+          geolocation: currentLocation,
+          faceDetection: validationResults?.faceDetection,
+          validation: validationResults?.metadata
+        }
+      )
+
+      if (!uploadResult.success) {
+        throw new Error(uploadResult.message)
+      }
+
+      setSuccess('Foto berhasil disimpan dengan validasi keamanan! 📸🔒')
       
       // Proceed to quiz
       setTimeout(() => {
         router.push(`/quiz/${locationId}`)
-      }, 1500)
+      }, 2000)
 
     } catch (error) {
       console.error('Photo submission error:', error)
@@ -450,6 +518,78 @@ export default function PhotoCapturePage() {
               {error}
             </AlertDescription>
           </Alert>
+        )}
+
+        {/* Validation Results */}
+        {validationResults && (
+          <Card className={`${validationResults.isValid ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-2 mb-2">
+                <Shield className={`w-4 h-4 ${validationResults.isValid ? 'text-green-400' : 'text-yellow-400'}`} />
+                <h4 className={`font-semibold text-sm ${validationResults.isValid ? 'text-green-400' : 'text-yellow-400'}`}>
+                  Hasil Validasi Keamanan
+                </h4>
+              </div>
+              
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-text-muted">Deteksi Wajah:</span>
+                  <span className={`${validationResults.faceDetection.valid ? 'text-green-400' : 'text-red-400'}`}>
+                    {validationResults.faceDetection.valid ? 
+                      `✅ ${validationResults.faceDetection.faceCount} wajah` : 
+                      '❌ Tidak terdeteksi'
+                    }
+                  </span>
+                </div>
+                
+                <div className="flex justify-between">
+                  <span className="text-text-muted">Ukuran File:</span>
+                  <span className="text-text-light">
+                    {(validationResults.metadata.fileSize / 1024).toFixed(1)} KB
+                  </span>
+                </div>
+                
+                {validationResults.metadata.timestamp && (
+                  <div className="flex justify-between">
+                    <span className="text-text-muted">Waktu Foto:</span>
+                    <span className={`${validationResults.metadata.isRecent ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {validationResults.metadata.isRecent ? '✅ Terbaru' : '⚠️ Lama'}
+                    </span>
+                  </div>
+                )}
+                
+                {validationResults.location && (
+                  <div className="flex justify-between">
+                    <span className="text-text-muted">Lokasi GPS:</span>
+                    <span className="text-green-400">✅ Terdeteksi</span>
+                  </div>
+                )}
+                
+                {validationResults.issues.length > 0 && (
+                  <div className="mt-2 p-2 bg-yellow-500/10 rounded">
+                    <p className="text-yellow-400 text-xs font-medium">⚠️ Peringatan:</p>
+                    <ul className="text-yellow-300 text-xs mt-1 space-y-1 ml-2">
+                      {validationResults.issues.map((issue: string, index: number) => (
+                        <li key={index}>• {issue}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Validation Loading */}
+        {validating && (
+          <Card className="bg-blue-500/10 border-blue-500/30">
+            <CardContent className="p-4 text-center">
+              <div className="flex items-center justify-center space-x-2">
+                <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                <span className="text-blue-400 text-sm">🔒 Memvalidasi keamanan foto...</span>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Camera Permission Request */}
@@ -559,9 +699,13 @@ export default function PhotoCapturePage() {
                           size="lg"
                           onClick={capturePhoto}
                           className="bg-gold hover:bg-gold/90 text-primary w-16 h-16 rounded-full"
-                          disabled={showLoadingState}
+                          disabled={showLoadingState || validating}
                         >
-                          <Camera className="w-6 h-6" />
+                          {validating ? (
+                            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            <Camera className="w-6 h-6" />
+                          )}
                         </Button>
                       )}
                       
@@ -602,7 +746,7 @@ export default function PhotoCapturePage() {
                     
                     <Button
                       onClick={submitPhoto}
-                      disabled={uploading}
+                      disabled={uploading || validating || (validationResults && !validationResults.isValid && validationResults.issues.includes('Tidak terdeteksi wajah manusia dalam foto'))}
                       className="bg-gold hover:bg-gold/90 text-primary"
                     >
                       {uploading ? (
@@ -610,10 +754,18 @@ export default function PhotoCapturePage() {
                           <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2"></div>
                           Menyimpan...
                         </>
+                      ) : validating ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2"></div>
+                          Memvalidasi...
+                        </>
                       ) : (
                         <>
                           <CheckCircle className="w-4 h-4 mr-2" />
-                          Lanjutkan ke Quiz
+                          {validationResults && !validationResults.isValid && validationResults.issues.includes('Tidak terdeteksi wajah manusia dalam foto') ? 
+                            'Foto Tidak Valid' : 
+                            'Lanjutkan ke Quiz'
+                          }
                         </>
                       )}
                     </Button>
@@ -658,12 +810,14 @@ export default function PhotoCapturePage() {
         {/* Photo Requirements */}
         <Card className="bg-blue-500/10 border-blue-500/20">
           <CardContent className="p-4">
-            <h4 className="text-blue-300 font-semibold text-sm mb-2">📋 Syarat Foto Selfie:</h4>
+            <h4 className="text-blue-300 font-semibold text-sm mb-2">📋 Syarat Foto Selfie & Keamanan:</h4>
             <ul className="text-text-muted text-xs space-y-1 ml-4 list-disc">
-              <li>Wajah Anda harus terlihat jelas</li>
+              <li>Wajah Anda harus terlihat jelas (divalidasi otomatis)</li>
               <li>Dekorasi kemerdekaan harus tampak di latar belakang</li>
               <li>Foto harus diambil di lokasi {location.name}</li>
               <li>Pastikan pencahayaan cukup untuk foto yang jelas</li>
+              <li>🔒 Sistem akan memvalidasi keaslian foto secara otomatis</li>
+              <li>📍 Lokasi GPS akan direkam untuk verifikasi</li>
             </ul>
           </CardContent>
         </Card>

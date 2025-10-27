@@ -434,29 +434,56 @@ export const supabaseApi = {
   }
 },
 
-  // Upload photo
-  async uploadPhoto(playerId: number, locationId: string, photoBlob: Blob): Promise<{ success: boolean; message: string; photoUrl?: string }> {
+  // Upload photo with enhanced metadata for fraud detection
+  async uploadPhoto(playerId: number, locationId: string, photoBlob: Blob, metadata?: {
+    deviceInfo?: any;
+    geolocation?: { latitude: number; longitude: number } | null;
+    faceDetection?: { valid: boolean; faceCount: number; confidence?: number };
+    validation?: {
+      isRecent: boolean;
+      hasGPS: boolean;
+      fileSize: number;
+      timestamp?: Date;
+      gpsCoords?: { lat: number; lng: number };
+    };
+  }): Promise<{ success: boolean; message: string; photoUrl?: string }> {
     try {
-      const fileName = `${playerId}_${locationId}_${Date.now()}.jpg`
+      const fileName = `${playerId}-${locationId}-${Date.now()}.jpg`
       
+      // Upload to Supabase Storage with enhanced metadata
       const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('photos')
+        .from('treasure-hunt-photos')
         .upload(fileName, photoBlob, {
           contentType: 'image/jpeg',
-          upsert: false
+          upsert: false,
+          metadata: {
+            playerId: playerId.toString(),
+            locationId,
+            timestamp: new Date().toISOString(),
+            deviceInfo: metadata?.deviceInfo ? JSON.stringify(metadata.deviceInfo) : navigator.userAgent,
+            geolocation: metadata?.geolocation ? JSON.stringify(metadata.geolocation) : null,
+            faceDetection: metadata?.faceDetection ? JSON.stringify(metadata.faceDetection) : null,
+            validation: metadata?.validation ? JSON.stringify(metadata.validation) : null,
+            fileSize: photoBlob.size.toString(),
+            fraudDetectionVersion: '1.0'
+          }
         })
 
       if (uploadError) {
+        console.error('Upload error:', uploadError)
         return { success: false, message: uploadError.message }
       }
 
       // Get public URL
       const { data: { publicUrl } } = supabase.storage
-        .from('photos')
+        .from('treasure-hunt-photos')
         .getPublicUrl(uploadData.path)
 
-      return { success: true, message: 'Foto berhasil diupload', photoUrl: publicUrl }
+      console.log('✅ Photo uploaded successfully with metadata:', fileName)
+      return { success: true, message: 'Foto berhasil diupload dengan validasi keamanan', photoUrl: publicUrl }
+      
     } catch (error) {
+      console.error('Photo upload error:', error)
       return { success: false, message: 'Gagal mengupload foto' }
     }
   },
